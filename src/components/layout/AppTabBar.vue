@@ -17,7 +17,7 @@ import { connectionColor, tabDisplayTitle, tabTooltipLines } from "@/lib/tabPres
 import { hexToRgba } from "@/lib/color";
 import type { QueryTab } from "@/types/database";
 
-defineProps<{
+const props = defineProps<{
   showDriverStore?: boolean;
 }>();
 
@@ -55,9 +55,25 @@ watch(
   },
 );
 
+watch(
+  () => props.showDriverStore,
+  (show) => {
+    if (!show) return;
+    nextTick(() => {
+      const container = tabsContainerRef.value;
+      if (!container) return;
+      const el = container.querySelector("[data-driver-store-tab]");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+      }
+      updateScrollButtons();
+    });
+  },
+);
+
 function tabColorStyle(tab: QueryTab) {
   const color = connectionColor(tab.connectionId);
-  const isActive = tab.id === queryStore.activeTabId;
+  const isActive = tab.id === queryStore.activeTabId && !props.showDriverStore;
   const isClassic = settingsStore.editorSettings.appLayout === "classic";
   if (!color) {
     if (isClassic) {
@@ -124,19 +140,19 @@ function tabIconClass(tab: QueryTab) {
                   settingsStore.editorSettings.appLayout === 'classic'
                     ? [
                         'h-full border-r border-border/50',
-                        tab.id === queryStore.activeTabId
+                        tab.id === queryStore.activeTabId && !showDriverStore
                           ? 'bg-background text-foreground font-medium'
                           : 'text-foreground/70 hover:text-foreground/90',
                       ]
                     : [
                         'h-7 rounded-md border',
-                        tab.id === queryStore.activeTabId
+                        tab.id === queryStore.activeTabId && !showDriverStore
                           ? 'text-foreground font-medium'
                           : 'border-border/60 text-foreground/70 hover:border-border hover:text-foreground/90',
                       ]
                 "
                 :style="tabColorStyle(tab)"
-                :data-active-tab="tab.id === queryStore.activeTabId"
+                :data-active-tab="tab.id === queryStore.activeTabId && !showDriverStore"
                 @click="
                   queryStore.activeTabId = tab.id;
                   emit('close-driver-store');
@@ -202,6 +218,7 @@ function tabIconClass(tab: QueryTab) {
       <!-- Driver Store Tab -->
       <div
         v-if="showDriverStore"
+        data-driver-store-tab
         class="group flex min-w-38 items-center gap-1 px-2 text-xs cursor-pointer transition-colors whitespace-nowrap"
         :class="
           settingsStore.editorSettings.appLayout === 'classic'

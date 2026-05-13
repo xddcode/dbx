@@ -110,6 +110,19 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
       copyText(JSON.stringify(objects, null, 2));
       return;
     }
+    const range = selectedRange.value;
+    if (range && range.startRow !== range.endRow) {
+      const items = displayItems.value.slice(range.startRow, range.endRow + 1);
+      const objects = items.map((item) => {
+        const obj: Record<string, unknown> = {};
+        columns.value.forEach((col, i) => {
+          obj[col] = item.data[i];
+        });
+        return obj;
+      });
+      copyText(JSON.stringify(objects, null, 2));
+      return;
+    }
     if (!contextCell.value) return;
     const item = getRowItem(contextCell.value.rowId);
     if (!item) return;

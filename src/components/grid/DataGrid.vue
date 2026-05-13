@@ -1091,6 +1091,26 @@ const selectionSummary = computed(() => {
   return t("grid.selectedCells", { count: selectedCellCount.value });
 });
 
+const multiRowCount = computed(() => {
+  if (hasRowSelection.value) return selectedRowCount.value;
+  const range = selectedRange.value;
+  if (range && range.startRow !== range.endRow) return range.endRow - range.startRow + 1;
+  return 1;
+});
+
+const isMultiRow = computed(() => multiRowCount.value > 1);
+
+function affectedRowIds(): number[] {
+  if (hasRowSelection.value && selectedRowCount.value > 0) {
+    return [...selectedRowIds.value];
+  }
+  const range = selectedRange.value;
+  if (range && range.startRow !== range.endRow) {
+    return displayItems.value.slice(range.startRow, range.endRow + 1).map((item) => item.id);
+  }
+  return [];
+}
+
 function isRowActive(index: number): boolean {
   const item = displayItems.value[index];
   if (item && isRowSelected(item.id)) return true;
@@ -2570,18 +2590,10 @@ defineExpose({
           <ContextMenuSubContent class="w-max max-w-[min(80vw,18rem)]">
             <ContextMenuItem v-if="contextColumn" @click="copyCell">{{ t("grid.copyCell") }}</ContextMenuItem>
             <ContextMenuItem @click="copyRow">
-              {{
-                hasRowSelection && selectedRowCount > 1
-                  ? t("grid.copyRows", { count: selectedRowCount })
-                  : t("grid.copyRow")
-              }}
+              {{ isMultiRow ? t("grid.copyRows", { count: multiRowCount }) : t("grid.copyRow") }}
             </ContextMenuItem>
             <ContextMenuItem @click="copyRowAsInsert">
-              {{
-                hasRowSelection && selectedRowCount > 1
-                  ? t("grid.copyRowsInsert", { count: selectedRowCount })
-                  : t("grid.copyRowInsert")
-              }}
+              {{ isMultiRow ? t("grid.copyRowsInsert", { count: multiRowCount }) : t("grid.copyRowInsert") }}
             </ContextMenuItem>
             <ContextMenuItem @click="copyAll">{{ t("grid.copyAll") }}</ContextMenuItem>
           </ContextMenuSubContent>
@@ -2604,17 +2616,9 @@ defineExpose({
         </ContextMenuSub>
         <ContextMenuSeparator />
         <template v-if="editable && contextRowItem">
-          <ContextMenuItem
-            @click="
-              hasRowSelection && selectedRowCount > 1 ? cloneRows([...selectedRowIds]) : cloneRow(contextRowItem.id)
-            "
-          >
+          <ContextMenuItem @click="isMultiRow ? cloneRows(affectedRowIds()) : cloneRow(contextRowItem.id)">
             <CopyPlus class="w-3.5 h-3.5 mr-2" />
-            {{
-              hasRowSelection && selectedRowCount > 1
-                ? t("grid.cloneRows", { count: selectedRowCount })
-                : t("grid.cloneRow")
-            }}
+            {{ isMultiRow ? t("grid.cloneRows", { count: multiRowCount }) : t("grid.cloneRow") }}
           </ContextMenuItem>
           <ContextMenuItem v-if="contextRowItem.isDeleted" @click="restoreRow(contextRowItem.id)">
             <Undo2 class="w-3.5 h-3.5 mr-2" /> {{ t("grid.restoreRow") }}
@@ -2622,18 +2626,10 @@ defineExpose({
           <ContextMenuItem
             v-else
             class="text-destructive"
-            @click="
-              hasRowSelection && selectedRowCount > 1
-                ? requestDeleteRows([...selectedRowIds])
-                : requestDeleteRow(contextRowItem.id)
-            "
+            @click="isMultiRow ? requestDeleteRows(affectedRowIds()) : requestDeleteRow(contextRowItem.id)"
           >
             <Trash2 class="w-3.5 h-3.5 mr-2" />
-            {{
-              hasRowSelection && selectedRowCount > 1
-                ? t("grid.deleteRows", { count: selectedRowCount })
-                : t("grid.deleteRow")
-            }}
+            {{ isMultiRow ? t("grid.deleteRows", { count: multiRowCount }) : t("grid.deleteRow") }}
           </ContextMenuItem>
           <ContextMenuSeparator />
         </template>

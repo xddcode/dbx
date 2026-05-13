@@ -411,7 +411,11 @@ function onAiRequestAutoExecuteSql(sql: string) {
 function handleKeydown(e: KeyboardEvent) {
   if (isCloseTabShortcut(e)) {
     e.preventDefault();
-    if (queryStore.activeTabId) queryStore.closeTab(queryStore.activeTabId);
+    if (showDriverStore.value) {
+      showDriverStore.value = false;
+    } else if (queryStore.activeTabId) {
+      queryStore.closeTab(queryStore.activeTabId);
+    }
     return;
   }
   if (
