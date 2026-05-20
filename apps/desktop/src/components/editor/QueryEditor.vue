@@ -24,7 +24,19 @@ import {
 } from "@/lib/sqlCompletion";
 import { extractIdentifierAt, isSqlKeyword, matchTable } from "@/lib/sqlNavigation";
 import { lineColumnToOffset, parseSqlErrorLocation } from "@/lib/sqlDiagnostics";
-import { loadEditorTheme, editorFontTheme, sqlCompletionTheme } from "@/lib/editorThemes";
+import {
+  EDITOR_FONT_FAMILY_CSS_VAR,
+  EDITOR_FONT_SIZE_CSS_VAR,
+  loadEditorTheme,
+  editorFontTheme,
+  sqlCompletionTheme,
+} from "@/lib/editorThemes";
+import {
+  clampEditorFontSize,
+  createEditorZoomCommitScheduler,
+  fontSizeFromGestureScale,
+  fontSizeFromWheelDelta,
+} from "@/lib/editorZoom";
 import { shortcutToCodeMirrorKey } from "@/lib/shortcutRegistry";
 import type { SqlCompletionColumn } from "@/lib/sqlCompletion";
 
@@ -56,9 +68,10 @@ const editorRef = ref<HTMLDivElement>();
 const view = shallowRef<EditorViewType | null>(null);
 const connectionStore = useConnectionStore();
 const settingsStore = useSettingsStore();
-const MIN_FONT_SIZE = 10;
-const MAX_FONT_SIZE = 24;
 const MAX_COMPLETION_TABLES = 200;
+const liveFontSize = ref(settingsStore.editorSettings.fontSize);
+const gestureStartFontSize = ref(settingsStore.editorSettings.fontSize);
+const isGestureZooming = ref(false);
 
 const searchVisible = ref(false);
 const searchText = ref("");
@@ -69,6 +82,10 @@ const useRegex = ref(false);
 const matchCount = ref(0);
 const currentMatchIndex = ref(0);
 const searchInputRef = ref<HTMLInputElement>();
+
+interface EditorGestureEvent extends Event {
+  scale?: number;
+}
 
 let editorViewModule: typeof import("@codemirror/view") | null = null;
 let fontThemeComp: import("@codemirror/state").Compartment | null = null;
@@ -86,35 +103,64 @@ let cachedTables: Array<{ name: string; schema?: string; type?: "table" | "view"
 // Persistent column cache keyed by "schema.table" or "table"
 const cachedColumnsByTable = new Map<string, SqlCompletionColumn[]>();
 
-function setFontSize(size: number) {
-  const next = Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, size));
-  const ss = settingsStore.editorSettings;
-  ss.fontSize = next;
+const zoomCommitScheduler = createEditorZoomCommitScheduler((fontSize) => {
+  if (settingsStore.editorSettings.fontSize === fontSize) return;
+  settingsStore.updateEditorSettings({ fontSize });
+});
+
+function syncEditorFontCssVars(fontSize = liveFontSize.value, fontFamily = settingsStore.editorSettings.fontFamily) {
+  if (!editorRef.value) return;
+  editorRef.value.style.setProperty(EDITOR_FONT_SIZE_CSS_VAR, `${clampEditorFontSize(fontSize)}px`);
+  editorRef.value.style.setProperty(EDITOR_FONT_FAMILY_CSS_VAR, fontFamily);
+}
+
+function applyLiveFontSize(size: number) {
+  const next = clampEditorFontSize(size);
+  if (liveFontSize.value === next) return;
+  liveFontSize.value = next;
+  syncEditorFontCssVars(next);
+  view.value?.requestMeasure();
+}
+
+function commitFontSize(size: number) {
+  const next = clampEditorFontSize(size);
+  applyLiveFontSize(next);
+  if (settingsStore.editorSettings.fontSize === next) return;
   settingsStore.updateEditorSettings({ fontSize: next });
-  if (view.value && fontThemeComp && editorViewModule) {
-    view.value.dispatch({
-      effects: [
-        fontThemeComp.reconfigure(
-          editorFontTheme(editorViewModule.EditorView, next, ss.fontFamily, {
-            fixedHeight: true,
-            scrollable: true,
-          }),
-        ),
-      ],
-    });
-  }
+}
+
+function scheduleFontSizeCommit(size: number) {
+  zoomCommitScheduler.schedule(size);
 }
 
 function zoomIn() {
-  setFontSize(settingsStore.editorSettings.fontSize + 1);
+  commitFontSize(liveFontSize.value + 1);
 }
 
 function zoomOut() {
-  setFontSize(settingsStore.editorSettings.fontSize - 1);
+  commitFontSize(liveFontSize.value - 1);
 }
 
 function resetZoom() {
-  setFontSize(13);
+  commitFontSize(13);
+}
+
+function onEditorGestureStart(event: EditorGestureEvent) {
+  event.preventDefault();
+  isGestureZooming.value = true;
+  gestureStartFontSize.value = liveFontSize.value;
+}
+
+function onEditorGestureChange(event: EditorGestureEvent) {
+  if (typeof event.scale !== "number") return;
+  event.preventDefault();
+  applyLiveFontSize(fontSizeFromGestureScale(gestureStartFontSize.value, event.scale));
+}
+
+function onEditorGestureEnd(event: Event) {
+  event.preventDefault();
+  isGestureZooming.value = false;
+  zoomCommitScheduler.flush(liveFontSize.value);
 }
 
 function runKeymapExtension(codeMirrorKeymap: (typeof import("@codemirror/view"))["keymap"]) {
@@ -654,7 +700,7 @@ onMounted(async () => {
         }
       }),
       fontThemeComp.of(
-        editorFontTheme(EditorView, ss.fontSize, ss.fontFamily, {
+        editorFontTheme(EditorView, liveFontSize.value, ss.fontFamily, {
           fixedHeight: true,
           scrollable: true,
         }),
@@ -663,8 +709,9 @@ onMounted(async () => {
         wheel(event) {
           if (!event.metaKey && !event.ctrlKey) return false;
           event.preventDefault();
-          if (event.deltaY < 0) zoomIn();
-          else if (event.deltaY > 0) zoomOut();
+          const next = fontSizeFromWheelDelta(liveFontSize.value, event.deltaY);
+          applyLiveFontSize(next);
+          scheduleFontSizeCommit(next);
           return true;
         },
         mousedown: (event: MouseEvent) => {
@@ -802,6 +849,7 @@ onMounted(async () => {
   });
 
   view.value = new EditorView({ state, parent: editorRef.value });
+  syncEditorFontCssVars(liveFontSize.value, ss.fontFamily);
 
   cachedTables = [];
 });
@@ -865,18 +913,16 @@ watch(
     if (!view.value || !codeMirrorTheme || !fontThemeComp || !wordWrapComp || !runKeymapComp || !editorViewModule) {
       return;
     }
+    if (!isGestureZooming.value && !zoomCommitScheduler.hasPendingCommit() && liveFontSize.value !== ss.fontSize) {
+      liveFontSize.value = ss.fontSize;
+    }
+    syncEditorFontCssVars(liveFontSize.value, ss.fontFamily);
     const themeExt = await loadEditorTheme(ss.theme);
     view.value.dispatch({
       effects: [
         codeMirrorTheme.reconfigure(themeExt),
         wordWrapComp.reconfigure(props.forceWordWrap || ss.wordWrap ? editorViewModule.EditorView.lineWrapping : []),
         runKeymapComp.reconfigure(runKeymapExtension(editorViewModule.keymap)),
-        fontThemeComp.reconfigure(
-          editorFontTheme(editorViewModule.EditorView, ss.fontSize, ss.fontFamily, {
-            fixedHeight: true,
-            scrollable: true,
-          }),
-        ),
       ],
     });
   },
@@ -884,6 +930,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  zoomCommitScheduler.dispose();
   view.value?.destroy();
 });
 
@@ -1013,7 +1060,12 @@ defineExpose({ openSearch });
 </script>
 
 <template>
-  <div class="h-full w-full overflow-hidden relative">
+  <div
+    class="h-full w-full overflow-hidden relative"
+    @gesturestart="onEditorGestureStart"
+    @gesturechange="onEditorGestureChange"
+    @gestureend="onEditorGestureEnd"
+  >
     <div ref="editorRef" data-query-editor-root class="h-full w-full overflow-hidden" />
     <Transition
       enter-active-class="transition-all duration-150"

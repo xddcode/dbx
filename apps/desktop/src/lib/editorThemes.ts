@@ -3,6 +3,9 @@ import type { EditorTheme } from "@/stores/settingsStore";
 
 type CodeMirrorStyleSpec = Parameters<typeof import("@codemirror/view").EditorView.theme>[0];
 
+export const EDITOR_FONT_SIZE_CSS_VAR = "--dbx-editor-font-size";
+export const EDITOR_FONT_FAMILY_CSS_VAR = "--dbx-editor-font-family";
+
 /** Load a CodeMirror theme extension by theme name. */
 export async function loadEditorTheme(theme: EditorTheme): Promise<Extension> {
   switch (theme) {
@@ -29,22 +32,22 @@ export async function loadEditorTheme(theme: EditorTheme): Promise<Extension> {
   }
 }
 
-/** Build a CodeMirror theme extension for font size + font family. */
-export function editorFontTheme(
-  EditorView: typeof import("@codemirror/view").EditorView,
-  size: number,
-  family: string,
+export function buildEditorFontThemeRules(
   opts?: { fixedHeight?: boolean; scrollable?: boolean },
-): Extension {
-  return EditorView.theme({
+  defaults?: { size?: number; family?: string },
+): CodeMirrorStyleSpec {
+  return {
     "&": {
       ...(opts?.fixedHeight ? { height: "100%" } : {}),
-      fontSize: `${size}px`,
+      fontSize: `var(${EDITOR_FONT_SIZE_CSS_VAR}, ${defaults?.size ?? 13}px)`,
     },
     ...(opts?.scrollable ? { ".cm-scroller": { overflow: "auto" } } : {}),
-    ".cm-content": { fontFamily: family },
+    ".cm-content": {
+      fontFamily: `var(${EDITOR_FONT_FAMILY_CSS_VAR}, ${defaults?.family ?? "monospace"})`,
+    },
     ".cm-gutters": {
       borderRight: "0 !important",
+      fontSize: `var(${EDITOR_FONT_SIZE_CSS_VAR}, ${defaults?.size ?? 13}px)`,
       position: "relative",
     },
     ".cm-gutters:after": {
@@ -61,7 +64,17 @@ export function editorFontTheme(
     ".cm-lineNumbers .cm-gutterElement": {
       paddingRight: "16px",
     },
-  });
+  };
+}
+
+/** Build a CodeMirror theme extension for font size + font family. */
+export function editorFontTheme(
+  EditorView: typeof import("@codemirror/view").EditorView,
+  size: number,
+  family: string,
+  opts?: { fixedHeight?: boolean; scrollable?: boolean },
+): Extension {
+  return EditorView.theme(buildEditorFontThemeRules(opts, { size, family }));
 }
 
 export function buildSqlCompletionThemeRules(): CodeMirrorStyleSpec {
