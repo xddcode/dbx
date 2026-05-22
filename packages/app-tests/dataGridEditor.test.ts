@@ -379,3 +379,59 @@ test("saving edited rows without deletes does not reload table data", async () =
 
   assert.deepEqual(emitted, []);
 });
+
+test("saving manually typed JSON from a MySQL grid normalizes smart quotes", async () => {
+  setActivePinia(createPinia());
+  installBrowserTestGlobals();
+
+  const result = computed(() => ({
+    columns: ["id", "payload"],
+    rows: [[1, "{}"] as CellValue[]],
+  }));
+  const rowStatusFilter = ref<"all" | "changed" | "edited" | "new" | "deleted">("all");
+  const executedSql: string[] = [];
+
+  const editor = useDataGridEditor({
+    result,
+    editable: computed(() => true),
+    databaseType: computed(() => "mysql"),
+    connectionId: computed(() => undefined),
+    database: computed(() => undefined),
+    tableMeta: computed(() => ({
+      tableName: "settings",
+      columns: [column("id", true), { ...column("payload"), data_type: "json" }],
+      primaryKeys: ["id"],
+    })),
+    onExecuteSql: computed(() => async (sql: string) => {
+      executedSql.push(sql);
+    }),
+    customSave: computed(() => undefined),
+    sql: computed(() => "SELECT id, payload FROM settings"),
+    searchText: ref(""),
+    whereFilterInput: ref(""),
+    orderByInput: ref(""),
+    rowStatusFilter,
+    pageSize: ref(50),
+    currentPage: ref(1),
+    getRowItem: (rowId) => {
+      if (rowId !== 0) return undefined;
+      return {
+        id: 0,
+        sourceIndex: 0,
+        data: result.value.rows[0],
+        isNew: false,
+        isDeleted: false,
+        isDirtyCol: [false, false],
+        status: "clean",
+      };
+    },
+    emit: () => {},
+  });
+
+  editor.applyCellValue(0, 1, "{“2:3”:“3:4”,“3:2”:“4:3”,“21:9”:“16:9”}");
+  await editor.saveChanges();
+
+  assert.deepEqual(executedSql, [
+    `UPDATE "settings" SET "payload" = '{"2:3":"3:4","3:2":"4:3","21:9":"16:9"}' WHERE "id" = 1;`,
+  ]);
+});

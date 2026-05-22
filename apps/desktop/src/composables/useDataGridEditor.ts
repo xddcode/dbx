@@ -269,7 +269,26 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
     if (typeof oldVal === "boolean") {
       return value === "true" || value === "1";
     }
-    return value;
+    return normalizeSmartQuotedJsonInput(value);
+  }
+
+  function normalizeSmartQuotedJsonInput(value: string): string {
+    if (!/[“”]/.test(value)) return value;
+    const trimmed = value.trim();
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return value;
+    try {
+      JSON.parse(value);
+      return value;
+    } catch {
+      // macOS smart punctuation can turn JSON delimiters into Chinese-style quotes.
+    }
+    const normalized = value.replace(/[“”]/g, '"');
+    try {
+      JSON.parse(normalized);
+      return normalized;
+    } catch {
+      return value;
+    }
   }
 
   function canEditColumn(columnIndex: number): boolean {
