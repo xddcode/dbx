@@ -50,3 +50,11 @@ test("structure editor exposes column order controls", () => {
   assert.match(source, /t\(['"]structureEditor\.moveColumnUp['"]\)/);
   assert.match(source, /t\(['"]structureEditor\.moveColumnDown['"]\)/);
 });
+
+test("structure editor uses a dense wide layout for large tables", () => {
+  assert.match(source, /sm:max-w-\[1180px\]/);
+  assert.doesNotMatch(source, /1500px/);
+  assert.match(source, /grid-cols-\[minmax\(0,1fr\)_300px\]/);
+  assert.match(source, /data-structure-density="compact"/);
+  assert.match(source, /class="h-6 min-w-28 text-\[11px\]"/);
+});
