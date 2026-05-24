@@ -28,23 +28,43 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useTheme } from "@/composables/useTheme";
 import { useToast } from "@/composables/useToast";
+import { type SqlHighlighter, createShikiSqlHighlighter } from "@/lib/sqlHighlighter";
 import { type EditableStructureColumn, type EditableStructureIndex } from "@/lib/tableStructureEditorSql";
 import { getTableStructureCapabilities } from "@/lib/tableStructureCapabilities";
 import {
   buildStructureTargetLabel,
+  combineDataType,
   createColumnDrafts,
   createIndexDrafts,
+  DATA_TYPE_OPTIONS,
+  splitDataType,
   toColumnNames,
 } from "@/lib/tableStructureEditorState";
 import type { ForeignKeyInfo, TriggerInfo } from "@/types/database";
 import * as api from "@/lib/api";
 
 const { t } = useI18n();
+const { isDark } = useTheme();
 const store = useConnectionStore();
 const { toast } = useToast();
+
+const sqlHighlighter = ref<SqlHighlighter>();
+onMounted(async () => {
+  sqlHighlighter.value = await createShikiSqlHighlighter({
+    appearance: () => (isDark.value ? "dark" : "light"),
+  });
+});
+
+const highlightedSql = computed(() => {
+  if (!pendingStatements.value.length) return "";
+  const sql = pendingStatements.value.join("\n");
+  return sqlHighlighter.value?.(sql) ?? sql;
+});
 
 const props = defineProps<{
   connectionId: string;
@@ -93,6 +113,7 @@ function onIndexColResize(e: MouseEvent, col: number) {
 const connection = computed(() => (props.connectionId ? store.getConfig(props.connectionId) : undefined));
 const databaseType = computed(() => connection.value?.db_type);
 const structureCapabilities = computed(() => getTableStructureCapabilities(databaseType.value));
+const dataTypeOptions = computed(() => DATA_TYPE_OPTIONS[databaseType.value ?? ""] ?? []);
 
 const indexTypesByDb: Record<string, string[]> = {
   postgres: ["BTREE", "HASH", "GIST", "SPGIST", "GIN", "BRIN"],
@@ -476,8 +497,11 @@ watch(
                   <th class="min-w-32 border-b border-r px-1.5 py-1.5 text-left">
                     {{ t("structureEditor.columnName") }}
                   </th>
-                  <th class="min-w-36 border-b border-r px-1.5 py-1.5 text-left">
+                  <th class="min-w-28 border-b border-r px-1.5 py-1.5 text-left">
                     {{ t("structureEditor.dataType") }}
+                  </th>
+                  <th class="min-w-20 border-b border-r px-1.5 py-1.5 text-left">
+                    {{ t("structureEditor.length") }}
                   </th>
                   <th class="w-16 whitespace-nowrap border-b border-r px-1.5 py-1.5 text-left">
                     {{ t("structureEditor.nullable") }}
@@ -516,10 +540,31 @@ watch(
                     />
                   </td>
                   <td class="border-b border-r px-1.5 py-1">
+                    <SearchableSelect
+                      v-if="!isColumnTypeDisabled(column)"
+                      :model-value="splitDataType(column.dataType).baseType"
+                      :options="dataTypeOptions"
+                      :placeholder="t('structureEditor.typePlaceholder')"
+                      :search-placeholder="t('structureEditor.typePlaceholder')"
+                      :empty-text="t('structureEditor.noMatchingType')"
+                      :loading-text="t('common.loading')"
+                      :allow-custom="true"
+                      trigger-class="h-6 min-w-24 font-mono text-[11px]"
+                      @update:model-value="(v: string) => column.dataType = combineDataType(v, splitDataType(column.dataType).params)"
+                    />
                     <Input
-                      v-model="column.dataType"
-                      class="h-6 min-w-32 font-mono text-[11px]"
+                      v-else
+                      :model-value="splitDataType(column.dataType).baseType"
+                      class="h-6 min-w-24 font-mono text-[11px]"
+                      disabled
+                    />
+                  </td>
+                  <td class="border-b border-r px-1.5 py-1">
+                    <Input
+                      :model-value="splitDataType(column.dataType).params"
+                      class="h-6 min-w-16 font-mono text-[11px]"
                       :disabled="isColumnTypeDisabled(column)"
+                      @update:model-value="column.dataType = combineDataType(splitDataType(column.dataType).baseType, String($event))"
                     />
                   </td>
                   <td class="border-b border-r px-1.5 py-1">
@@ -891,8 +936,7 @@ watch(
           <pre
             v-if="pendingStatements.length"
             class="whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 font-mono text-[11px] leading-4"
-            >{{ pendingStatements.join("\n") }}</pre
-          >
+            v-html="highlightedSql" />
           <div v-else class="flex h-full items-center justify-center text-sm text-muted-foreground">
             {{ t("structureEditor.noChanges") }}
           </div>
