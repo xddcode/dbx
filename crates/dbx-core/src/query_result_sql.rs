@@ -156,20 +156,16 @@ pub fn build_paginated_query_sql(options: PaginatedQuerySqlOptions) -> QuerySqlB
 
     let safe_limit = options.limit.max(1);
     let safe_offset = options.offset;
-    let alias = quote_table_identifier(options.database_type, "dbx_page");
-    let wrapped_sql = if options.database_type == Some(DatabaseType::SqlServer) {
-        sql_server_statement_for_derived_table(&statement)
-    } else {
-        statement
-    };
-    let base = format!("SELECT * FROM ({wrapped_sql}) {alias}");
 
     if options.database_type == Some(DatabaseType::SqlServer) {
         if safe_offset > 0 {
             return err("unsupported");
         }
-        return ok(format!("SELECT TOP ({safe_limit}) * FROM ({wrapped_sql}) {alias}"));
+        return ok(add_sql_server_top(&statement, safe_limit));
     }
+
+    let alias = quote_table_identifier(options.database_type, "dbx_page");
+    let base = format!("SELECT * FROM ({statement}) {alias}");
 
     if options.database_type.is_some_and(uses_fetch_first) {
         let offset_sql = if safe_offset > 0 { format!(" OFFSET {safe_offset} ROWS") } else { String::new() };
@@ -322,6 +318,14 @@ fn has_top_level_select_into(sql: &str) -> bool {
         }
     }
     false
+}
+
+fn add_sql_server_top(sql: &str, limit: usize) -> String {
+    if sql.len() >= 6 && sql[..6].to_ascii_uppercase() == "SELECT" {
+        format!("SELECT TOP ({limit}){}", &sql[6..])
+    } else {
+        format!("SELECT TOP ({limit}) * FROM ({sql}) [dbx_page]")
+    }
 }
 
 fn sql_server_statement_for_derived_table(statement: &str) -> String {
@@ -568,7 +572,20 @@ mod tests {
         });
 
         assert_eq!(result.ok, true);
-        assert_eq!(result.sql.unwrap(), "SELECT TOP (100) * FROM (SELECT id FROM users) [dbx_page]");
+        assert_eq!(result.sql.unwrap(), "SELECT TOP (100) id FROM users ORDER BY id DESC");
+    }
+
+    #[test]
+    fn wraps_sqlserver_select_with_unnamed_column() {
+        let result = build_paginated_query_sql(PaginatedQuerySqlOptions {
+            original_sql: "SELECT @@version".to_string(),
+            database_type: Some(DatabaseType::SqlServer),
+            limit: 100,
+            offset: 0,
+        });
+
+        assert_eq!(result.ok, true);
+        assert_eq!(result.sql.unwrap(), "SELECT TOP (100) @@version");
     }
 
     #[test]
