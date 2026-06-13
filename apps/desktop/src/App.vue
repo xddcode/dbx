@@ -956,8 +956,35 @@ async function reconnectRestoredTabs() {
 
 function handleContextMenu(e: MouseEvent) {
   const target = e.target as HTMLElement;
-  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
-  if (target.closest("[data-reka-collection-item], [data-radix-vue-collection-item], [data-context-menu]")) return;
+
+  // Check if target is a standard editable input element
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+    if (import.meta.env.DEV) {
+      console.debug("[contextmenu] Allowing for input/textarea:", target);
+    }
+    return;
+  }
+
+  // Check if target or any parent has contenteditable attribute
+  if (target.isContentEditable || target.closest("[contenteditable]")) {
+    if (import.meta.env.DEV) {
+      console.debug("[contextmenu] Allowing for contenteditable:", target);
+    }
+    return;
+  }
+
+  // Check if target is within a custom context menu container or collection item
+  if (target.closest("[data-reka-collection-item], [data-radix-vue-collection-item], [data-context-menu]")) {
+    if (import.meta.env.DEV) {
+      console.debug("[contextmenu] Allowing for custom context menu container:", target);
+    }
+    return;
+  }
+
+  // Prevent default context menu for all other elements
+  if (import.meta.env.DEV) {
+    console.debug("[contextmenu] Preventing default for:", target);
+  }
   e.preventDefault();
 }
 
