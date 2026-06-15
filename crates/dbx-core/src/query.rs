@@ -3,6 +3,9 @@ use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, NaiveDateTime, Nai
 #[cfg(feature = "duckdb-bundled")]
 use duckdb::types::{TimeUnit, Value, ValueRef};
 use mysql_async::prelude::Queryable;
+use sqlparser::ast::{ObjectType, Statement};
+use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::parser::Parser;
 use std::future::Future;
 use std::time::Duration;
 #[cfg(feature = "duckdb-bundled")]
@@ -963,6 +966,11 @@ pub async fn execute_sql_statement_with_options(
         return Ok(empty_query_result(0));
     }
 
+    if let Some(target_database) = postgres_drop_database_target(db_type, sql) {
+        return execute_postgres_drop_database(state, connection_id, &target_database, sql, cancel_token, options)
+            .await;
+    }
+
     // When a query tab has a client session, keep even database-less execution
     // on that tab-scoped pool so connection-level state (for example MySQL @vars)
     // survives across runs.
@@ -992,6 +1000,76 @@ pub async fn execute_sql_statement_with_options(
         }
         _ => result,
     }
+}
+
+async fn execute_postgres_drop_database(
+    state: &AppState,
+    connection_id: &str,
+    target_database: &str,
+    sql: &str,
+    cancel_token: Option<CancellationToken>,
+    options: QueryExecutionOptions,
+) -> Result<db::QueryResult, String> {
+    state.close_database_pool(connection_id, Some(target_database)).await?;
+
+    let admin_database = postgres_drop_database_admin_database(target_database);
+    let pool_key = state
+        .get_or_create_pool_for_session(connection_id, Some(admin_database), options.client_session_id.as_deref())
+        .await?;
+
+    if is_canceled(&cancel_token) {
+        return Err(canceled_error());
+    }
+
+    check_read_only_for_connection(state, &pool_key, sql).await?;
+    let pool = {
+        let connections = state.connections.read().await;
+        match connections.get(&pool_key) {
+            Some(PoolKind::Postgres(pool)) => pool.clone(),
+            Some(_) => return Err("DROP DATABASE reconnect did not create a PostgreSQL connection".to_string()),
+            None => return Err("Connection not found".to_string()),
+        }
+    };
+
+    let query_timeout = resolve_query_timeout(options.timeout_secs);
+    let max_rows = options.max_rows;
+    wait_for_query_opt(cancel_token, query_timeout, async {
+        db::postgres::terminate_current_user_database_backends(&pool, target_database).await?;
+        db::postgres::execute_query_with_max_rows(&pool, sql, max_rows).await
+    })
+    .await
+}
+
+fn postgres_drop_database_target(db_type: Option<DatabaseType>, sql: &str) -> Option<String> {
+    if db_type != Some(DatabaseType::Postgres) {
+        return None;
+    }
+    parse_drop_database_target(sql)
+}
+
+fn postgres_drop_database_admin_database(target_database: &str) -> &'static str {
+    if target_database.eq_ignore_ascii_case("postgres") {
+        "template1"
+    } else {
+        "postgres"
+    }
+}
+
+fn parse_drop_database_target(sql: &str) -> Option<String> {
+    let dialect = PostgreSqlDialect {};
+    let statements = Parser::parse_sql(&dialect, sql).ok()?;
+    let [Statement::Drop { object_type, names, .. }] = statements.as_slice() else {
+        return None;
+    };
+    if *object_type != ObjectType::Database || names.len() != 1 {
+        return None;
+    }
+
+    let parts = &names[0].0;
+    if parts.len() != 1 {
+        return None;
+    }
+    parts[0].as_ident().map(|ident| ident.value.clone())
 }
 
 pub async fn close_query_session(
@@ -2053,6 +2131,29 @@ mod tests {
         assert_eq!(schema_for_execution_context(Some(DatabaseType::Iris), Some("SQLUser")), None);
         assert_eq!(schema_for_execution_context(Some(DatabaseType::Oracle), Some("APP")), Some("APP"));
         assert_eq!(schema_for_execution_context(None, Some("APP")), Some("APP"));
+    }
+
+    #[test]
+    fn parses_postgres_drop_database_target() {
+        assert_eq!(parse_drop_database_target("DROP DATABASE vaultwarden;"), Some("vaultwarden".to_string()));
+        assert_eq!(parse_drop_database_target("drop database if exists \"app db\";"), Some("app db".to_string()));
+        assert_eq!(
+            parse_drop_database_target("/*x*/ DROP DATABASE \"app\"\"db\" -- trailing\n;"),
+            Some("app\"db".to_string())
+        );
+    }
+
+    #[test]
+    fn ignores_non_single_drop_database_statements() {
+        assert_eq!(parse_drop_database_target("DROP TABLE vaultwarden;"), None);
+        assert_eq!(parse_drop_database_target("DROP DATABASE vaultwarden; SELECT 1;"), None);
+        assert_eq!(parse_drop_database_target("DROP DATABASE 123bad;"), None);
+    }
+
+    #[test]
+    fn chooses_safe_postgres_drop_database_admin_database() {
+        assert_eq!(postgres_drop_database_admin_database("vaultwarden"), "postgres");
+        assert_eq!(postgres_drop_database_admin_database("postgres"), "template1");
     }
 
     #[test]
