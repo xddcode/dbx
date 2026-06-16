@@ -808,6 +808,7 @@ export default {
     save: "保存",
     retry: "重试",
     more: "更多",
+    done: "完成",
   },
   explain: {
     title: "执行计划",

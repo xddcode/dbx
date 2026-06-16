@@ -735,6 +735,7 @@ export default {
     close: "關閉",
     retry: "重試",
     more: "更多",
+    done: "完成",
   },
   explain: {
     title: "執行計畫",

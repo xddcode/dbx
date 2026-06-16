@@ -756,6 +756,7 @@ export default {
     close: "Chiudi",
     retry: "Riprova",
     more: "Altro",
+    done: "Fatto",
   },
   explain: {
     title: "Piano di Spiegazione",

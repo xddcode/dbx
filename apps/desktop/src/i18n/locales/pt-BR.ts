@@ -756,6 +756,7 @@ export default {
     close: "Fechar",
     retry: "Tentar novamente",
     more: "Mais",
+    done: "Concluído",
   },
   explain: {
     title: "Plano de Execução",

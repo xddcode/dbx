@@ -809,6 +809,7 @@ export default {
     save: "Save",
     retry: "Retry",
     more: "More",
+    done: "Done",
   },
   explain: {
     title: "Explain Plan",
