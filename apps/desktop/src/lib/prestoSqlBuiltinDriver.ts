@@ -10,6 +10,10 @@ export function prestoSqlMavenBundle(bundles: JdbcMavenBundleInfo[]): JdbcMavenB
   return bundles.find((bundle) => bundle.coordinate === PRESTOSQL_JDBC_DRIVER_COORDINATE);
 }
 
+export function prestoSqlBuiltinDriverPaths(bundles: JdbcMavenBundleInfo[]): string[] {
+  return (prestoSqlMavenBundle(bundles)?.artifacts ?? []).map((artifact) => artifact.path).filter(Boolean);
+}
+
 export function prestoSqlBuiltinDriverRow(bundles: JdbcMavenBundleInfo[]): AgentDriverInfo {
   const installedBundle = prestoSqlMavenBundle(bundles);
   return {

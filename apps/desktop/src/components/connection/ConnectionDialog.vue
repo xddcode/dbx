@@ -30,6 +30,7 @@ import { MQ_PINNED_VERSION_OPTIONS, pinnedVersionToSelection, selectionToPinnedV
 import { mongodbAuthFailureHint, mongoUrlParam, setMongoUrlParam } from "@/lib/mongoConnectionOptions";
 import { copyToClipboard } from "@/lib/clipboard";
 import { showAgentDriverInstallHint, type AgentDriverInstallState } from "@/lib/agentDriverInstallHint";
+import { prestoSqlBuiltinDriverPaths } from "@/lib/prestoSqlBuiltinDriver";
 import { ArrowLeft, ArrowDown, ArrowUp, CheckSquare, ChevronRight, CircleHelp, Copy, ExternalLink, FilePlus2, FolderOpen, GripVertical, Grid3X3, KeyRound, Link2, List, ListFilter, Loader2, Pipette, Plus, Search, ShieldCheck, Square, Trash2 } from "@lucide/vue";
 import { buildDraftVisibleDatabasesConnectionId, connectionCanChooseVisibleDatabases, initialVisibleDatabaseSelection, visibleDatabaseSelectionIsStale } from "@/lib/connectionVisibleDatabases";
 import { canSaveVisibleDatabaseSelection, filterDatabaseNamesForConnection, isSystemDatabaseName, normalizeVisibleDatabaseSelection } from "@/lib/visibleDatabases";
@@ -1390,6 +1391,7 @@ function connectionConfigForSubmit(id: string): ConnectionConfig {
     } else if (config.db_type === "prestosql") {
       config.connection_string = undefined;
       config.jdbc_driver_class = config.jdbc_driver_class?.trim() || "io.prestosql.jdbc.PrestoDriver";
+      applyPrestoSqlBuiltinDriverPathsIfAvailable();
     }
     config.jdbc_driver_class = config.jdbc_driver_class?.trim() || undefined;
     config.jdbc_driver_paths = jdbcDriverPathsInput.value
@@ -2256,6 +2258,7 @@ async function loadJdbcDrivers() {
     const [drivers, bundles] = await Promise.all([api.listJdbcDrivers(), api.listJdbcMavenBundles()]);
     jdbcDrivers.value = drivers;
     jdbcMavenBundles.value = bundles;
+    applyPrestoSqlBuiltinDriverPathsIfAvailable();
   } catch {
     jdbcDrivers.value = [];
     jdbcMavenBundles.value = [];
@@ -2285,6 +2288,15 @@ function addJdbcDriverPaths(paths: string[]) {
     .map((value) => value.trim())
     .filter(Boolean);
   jdbcDriverPathsInput.value = Array.from(new Set([...existing, ...paths])).join("\n");
+}
+
+function applyPrestoSqlBuiltinDriverPathsIfAvailable() {
+  if (form.value.db_type !== "prestosql" || jdbcManualClasspathCount.value > 0) return;
+  const paths = prestoSqlBuiltinDriverPaths(jdbcMavenBundles.value);
+  if (paths.length === 0) return;
+  addJdbcDriverPaths(paths);
+  selectedJdbcDriverPath.value = jdbcDriverSelectItems.value.find((item) => paths.every((path) => item.paths.includes(path)))?.id ?? "";
+  jdbcManualClasspathOpen.value = false;
 }
 
 function onJdbcDriverSelect(id: any) {

@@ -14,6 +14,10 @@ describe("connectionAttemptTimeout", () => {
     expect(connectionAttemptTimeoutMs({ db_type: "oracle", connect_timeout_secs: 5, transport_layers: [] })).toBe(AGENT_DRIVER_MIN_CONNECT_TIMEOUT_SECS * 1000 + CONNECTION_ATTEMPT_TIMEOUT_BUFFER_MS);
   });
 
+  it("uses the startup floor for PrestoSQL JDBC plugin connections", () => {
+    expect(connectionAttemptTimeoutMs({ db_type: "prestosql", connect_timeout_secs: 5, transport_layers: [] })).toBe(AGENT_DRIVER_MIN_CONNECT_TIMEOUT_SECS * 1000 + CONNECTION_ATTEMPT_TIMEOUT_BUFFER_MS);
+  });
+
   it("uses a 30s Access agent startup floor", () => {
     expect(connectionAttemptTimeoutMs({ db_type: "access", connect_timeout_secs: 5, transport_layers: [] })).toBe(ACCESS_AGENT_MIN_CONNECT_TIMEOUT_SECS * 1000 + CONNECTION_ATTEMPT_TIMEOUT_BUFFER_MS);
   });
