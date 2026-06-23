@@ -350,6 +350,18 @@ function requestExecute() {
   return true;
 }
 
+function handleSqlSingleQuote(view: EditorViewType): boolean {
+  const { state } = view;
+  if (state.readOnly) return false;
+  if (state.selection.ranges.some((range) => !range.empty || range.from === 0 || state.doc.sliceString(range.from - 1, range.from) !== "'")) return false;
+  const transaction = state.changeByRange((range) => ({
+    changes: { from: range.from, insert: "'" },
+    range,
+  }));
+  view.dispatch(transaction, { userEvent: "input.type" });
+  return true;
+}
+
 function executionPickerAnchor(currentView: EditorViewType, cursorPos: number, candidateCount: number): { left: number; top: number } | undefined {
   const cursorRect = currentView.coordsAtPos(cursorPos);
   const rootRect = editorRef.value?.getBoundingClientRect();
@@ -1933,6 +1945,7 @@ onMounted(async () => {
       previewRangeComp.of(buildPreviewRangeExtension()),
       Prec.highest(
         keymap.of([
+          { key: "'", run: handleSqlSingleQuote },
           ...closeBracketsKeymap,
           { key: "Tab", run: handleTab },
           {
