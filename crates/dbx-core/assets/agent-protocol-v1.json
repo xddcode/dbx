@@ -72,7 +72,9 @@
     "server_version",
     "insert_document",
     "update_document",
-    "delete_document"
+    "update_documents",
+    "delete_document",
+    "delete_documents"
   ],
   "kvMethods": [
     "kv_list_prefix",

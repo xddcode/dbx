@@ -249,10 +249,11 @@ pub enum MongoAgentMethod {
     UpdateDocument,
     UpdateDocuments,
     DeleteDocument,
+    DeleteDocuments,
 }
 
 impl MongoAgentMethod {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 10] = [
         Self::ListDatabases,
         Self::ListCollections,
         Self::FindDocuments,
@@ -260,7 +261,9 @@ impl MongoAgentMethod {
         Self::ServerVersion,
         Self::InsertDocument,
         Self::UpdateDocument,
+        Self::UpdateDocuments,
         Self::DeleteDocument,
+        Self::DeleteDocuments,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -274,6 +277,7 @@ impl MongoAgentMethod {
             Self::UpdateDocument => "update_document",
             Self::UpdateDocuments => "update_documents",
             Self::DeleteDocument => "delete_document",
+            Self::DeleteDocuments => "delete_documents",
         }
     }
 }
@@ -972,6 +976,13 @@ impl AgentDriverClient {
         self.call_mongo_method(MongoAgentMethod::DeleteDocument, params).await
     }
 
+    pub async fn mongo_delete_documents<T: DeserializeOwned + Send + 'static>(
+        &mut self,
+        params: Value,
+    ) -> Result<T, String> {
+        self.call_mongo_method(MongoAgentMethod::DeleteDocuments, params).await
+    }
+
     pub async fn try_optional_handshake(&mut self, app_version: &str) -> Option<AgentHandshake> {
         match self.call_method::<AgentHandshake>(AgentMethod::Handshake, agent_handshake_params(app_version)).await {
             Ok(handshake) => {
@@ -1495,7 +1506,9 @@ mod tests {
         assert_eq!(MongoAgentMethod::ServerVersion.as_str(), "server_version");
         assert_eq!(MongoAgentMethod::InsertDocument.as_str(), "insert_document");
         assert_eq!(MongoAgentMethod::UpdateDocument.as_str(), "update_document");
+        assert_eq!(MongoAgentMethod::UpdateDocuments.as_str(), "update_documents");
         assert_eq!(MongoAgentMethod::DeleteDocument.as_str(), "delete_document");
+        assert_eq!(MongoAgentMethod::DeleteDocuments.as_str(), "delete_documents");
     }
 
     #[test]
@@ -1537,7 +1550,9 @@ mod tests {
         let _mongo_server_version = AgentDriverClient::mongo_server_version::<serde_json::Value>;
         let _mongo_insert_document = AgentDriverClient::mongo_insert_document::<serde_json::Value>;
         let _mongo_update_document = AgentDriverClient::mongo_update_document::<serde_json::Value>;
+        let _mongo_update_documents = AgentDriverClient::mongo_update_documents::<serde_json::Value>;
         let _mongo_delete_document = AgentDriverClient::mongo_delete_document::<serde_json::Value>;
+        let _mongo_delete_documents = AgentDriverClient::mongo_delete_documents::<serde_json::Value>;
     }
 
     #[test]

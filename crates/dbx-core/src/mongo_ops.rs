@@ -318,7 +318,18 @@ pub async fn mongo_delete_documents_core(
         PoolKind::MongoDb(client) => {
             mongo_driver::delete_documents(client, database, collection, filter_json, many).await
         }
-        PoolKind::Agent(_) => Err("MongoDB legacy agent does not support bulk deleteOne/deleteMany writes".to_string()),
+        PoolKind::Agent(client) => {
+            let mut client = client.lock().await;
+            let result: serde_json::Value = client
+                .mongo_delete_documents(serde_json::json!({
+                    "database": database,
+                    "collection": collection,
+                    "filter_json": filter_json,
+                    "many": many,
+                }))
+                .await?;
+            Ok(result.get("deleted_count").and_then(|v| v.as_u64()).unwrap_or(0))
+        }
         _ => Err("Not a MongoDB connection".to_string()),
     }
 }
