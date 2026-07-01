@@ -251,6 +251,10 @@ environment:
 sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
 ```
 
+**NIXOS/NIX :** 
+
+<a href="README-NIX.md">查看 README-NIX.md</a>
+
 **Windows：**
 
 无需额外安装。
