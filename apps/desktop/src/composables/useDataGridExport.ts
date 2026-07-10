@@ -343,9 +343,10 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
     return cache.ready && cache.key === insertCopyKey(excludePrimaryKeys, insertMode);
   }
 
-  function copyPreparedRowAsInsert(excludePrimaryKeys: boolean, insertMode: DataGridCopyInsertMode = "merged"): boolean {
+  async function copyPreparedRowAsInsert(excludePrimaryKeys: boolean, insertMode: DataGridCopyInsertMode = "merged"): Promise<boolean> {
+    await prefetchRowAsInsertStatement(excludePrimaryKeys, insertMode);
     if (!canCopyPreparedInsert(excludePrimaryKeys, insertMode)) return false;
-    void copyText(insertCopyCache(excludePrimaryKeys, insertMode).text);
+    await copyText(insertCopyCache(excludePrimaryKeys, insertMode).text);
     return true;
   }
 
@@ -414,9 +415,10 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
     return cache.ready && cache.key === updateCopyKey();
   }
 
-  function copyPreparedRowAsUpdate(): boolean {
+  async function copyPreparedRowAsUpdate(): Promise<boolean> {
+    await prefetchRowAsUpdateStatement();
     if (!canCopyPreparedUpdate()) return false;
-    void copyText(copyRowUpdateCache.value.text);
+    await copyText(copyRowUpdateCache.value.text);
     return true;
   }
 
@@ -512,16 +514,18 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
   }
 
   async function copyRowAsInsert(insertMode: DataGridCopyInsertMode = "merged") {
-    copyPreparedRowAsInsert(false, insertMode);
+    await copyPreparedRowAsInsert(false, insertMode);
   }
 
   async function copyRowAsInsertWithoutPrimaryKeys(insertMode: DataGridCopyInsertMode = "merged") {
-    copyPreparedRowAsInsert(true, insertMode);
+    await copyPreparedRowAsInsert(true, insertMode);
   }
 
   async function copyRowAsUpdate() {
-    copyPreparedRowAsUpdate();
+    await copyPreparedRowAsUpdate();
   }
+
+  const canCopyRowAsInsert = computed(() => insertEligibleRows().length > 0);
 
   const canCopyRowAsUpdate = computed(() => {
     if (!tableMeta.value?.primaryKeys.length) return false;
@@ -1112,6 +1116,7 @@ export function useDataGridExport(options: UseDataGridExportOptions) {
     canCopyPreparedUpdate,
     copyPreparedRowAsUpdate,
     copyRowAsUpdate,
+    canCopyRowAsInsert,
     canCopyRowAsInsertWithoutPrimaryKeys,
     canCopyRowAsUpdate,
     copyAll,

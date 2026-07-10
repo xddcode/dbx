@@ -436,6 +436,53 @@ test("copy row as INSERT refreshes prepared SQL after row data changes", async (
   ]);
 });
 
+test("copy row as INSERT works without prior prefetch (first context-menu click)", async () => {
+  const contextCell = ref({ rowId: 1, rowIndex: 0, col: 0 });
+  const row = {
+    id: 1,
+    data: [1, "alice"],
+    isNew: false,
+    isDeleted: false,
+    isDirtyCol: [false, false],
+    status: "",
+  };
+  apiMock.buildDataGridCopyInsertStatement.mockResolvedValueOnce("INSERT INTO users (id, name) VALUES (1, 'alice');");
+  const composable = useDataGridExport({
+    columns: computed(() => ["id", "name"]),
+    displayItems: computed(() => [row]),
+    sql: computed(() => undefined),
+    tableMeta: computed(() => ({
+      tableName: "users",
+      primaryKeys: ["id"],
+    })),
+    databaseType: computed(() => "mysql"),
+    connectionId: computed(() => "conn-1"),
+    database: computed(() => "db"),
+    context: computed(() => "table-data"),
+    sourceColumns: computed(() => undefined),
+    columnTypes: computed(() => undefined),
+    whereInput: computed(() => undefined),
+    orderBy: computed(() => undefined),
+    exportBatchSize: computed(() => 1000),
+    hasCellSelection: computed(() => false),
+    selectedCells: computed(() => ({ columns: [], rows: [] })),
+    selectedRange: computed(() => null),
+    contextCell,
+    getRowItem: () => row,
+    selectedRowIds: ref(new Set<number>()),
+    hasRowSelection: computed(() => false),
+  });
+
+  assert.equal(composable.canCopyRowAsInsert.value, true);
+  assert.equal(composable.canCopyPreparedInsert(false), false);
+
+  await composable.copyRowAsInsert();
+
+  assert.equal(apiMock.buildDataGridCopyInsertStatement.mock.calls.length, 1);
+  assert.equal(clipboardMock.copyToClipboard.mock.calls[0][0], "INSERT INTO users (id, name) VALUES (1, 'alice');");
+  assert.equal(composable.canCopyPreparedInsert(false), true);
+});
+
 test("default data grid export file names use sanitized base names and compact local timestamps", () => {
   vi.useFakeTimers();
   try {
