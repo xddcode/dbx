@@ -46,6 +46,7 @@ import {
 import { createRunStatementButtonDom, loadEditorTheme, editorFontTheme } from "@/lib/editor/editorThemes";
 import { formatAiModelOption } from "@/lib/ai/aiModelPresentation";
 import ThemeCustomizerDialog from "./ThemeCustomizerDialog.vue";
+import TunnelProfileManager from "@/components/connection/TunnelProfileManager.vue";
 import { isTauriRuntime } from "@/lib/backend/tauriRuntime";
 import { useTheme } from "@/composables/useTheme";
 import { copyToClipboard } from "@/lib/common/clipboard";
@@ -88,8 +89,9 @@ import { normalizeSqlFormatterSettings, type SqlFormatterSettings } from "@/lib/
 import { currentExecutableStatementRange, type SqlTextRange } from "@/lib/sql/sqlStatementRanges";
 import { executableStatementRangeCacheForDoc, executableStatementRangeStartingAt, type ExecutableStatementRangeCache } from "@/lib/sql/executableStatementRangeCache";
 import { EMPTY_TABLE_COLUMN_TEMPLATE_DATA_TYPE, parseTableColumnTemplateFields, TABLE_COLUMN_TEMPLATE_DATABASE_TYPES } from "@/lib/table/tableColumnTemplates";
+import { DEFAULT_SQL_VARIABLE_SYNTAX_TOGGLES, normalizeSqlVariableSyntaxOverrides, SQL_VARIABLE_SYNTAX_DATABASE_TYPES, SQL_VARIABLE_SYNTAX_KEYS, SQL_VARIABLE_SYNTAX_TOKENS, type SqlVariableSyntaxOverrides, type SqlVariableSyntaxToggles } from "@/lib/sql/sqlVariableSyntax";
 import { buildMcpCodexConfig, buildMcpJsonConfig, buildMcpOpenCodeConfig, buildMcpVsCodeConfig, type McpEnvEntry, type McpLaunchConfig } from "@/lib/mcp/mcpConfigTemplates";
-import { isWindows } from "@/lib/backend/platform";
+import { isMacOS, isWindows } from "@/lib/backend/platform";
 import { combineDataTypeForDatabase, dataTypeLengthInputValue, getDataTypeOptions, getDefaultLengthForType, isDataTypeLengthDisabled, splitDataType } from "@/lib/table/tableStructureEditorState";
 import { useToast } from "@/composables/useToast";
 import type { DatabaseType, SqlSnippet } from "@/types/database";
@@ -282,8 +284,36 @@ const editCompactColumnHeaderActions = ref(settingsStore.editorSettings.compactC
 const editDataGridQuickEntry = ref(settingsStore.editorSettings.dataGridQuickEntry);
 const editInfiniteScroll = ref(settingsStore.editorSettings.infiniteScroll);
 const editInfiniteScrollMaxRows = ref(settingsStore.editorSettings.infiniteScrollMaxRows);
+const editAutoCalculateTotalRows = ref(settingsStore.editorSettings.autoCalculateTotalRows);
 const editTableColumnTemplateRows = ref<TableColumnTemplateGridRow[]>(tableColumnTemplateRowsFromSettings(settingsStore.editorSettings.tableColumnTemplateFields));
 const editTableColumnTemplateDatabaseType = ref<DatabaseType>(TABLE_COLUMN_TEMPLATE_DATABASE_TYPES[0] ?? "mysql");
+const editSqlVariableSyntaxOverrides = ref<SqlVariableSyntaxOverrides>(normalizeSqlVariableSyntaxOverrides(settingsStore.editorSettings.sqlVariableSyntaxOverrides));
+const editSqlVariableSyntaxDatabaseType = ref<DatabaseType>(SQL_VARIABLE_SYNTAX_DATABASE_TYPES[0] ?? "mysql");
+
+function sqlVariableSyntaxToggle(key: keyof SqlVariableSyntaxToggles): boolean {
+  return editSqlVariableSyntaxOverrides.value[editSqlVariableSyntaxDatabaseType.value]?.[key] ?? true;
+}
+
+function setSqlVariableSyntaxToggle(key: keyof SqlVariableSyntaxToggles, value: boolean) {
+  const dbType = editSqlVariableSyntaxDatabaseType.value;
+  const merged: SqlVariableSyntaxToggles = {
+    ...DEFAULT_SQL_VARIABLE_SYNTAX_TOGGLES,
+    ...editSqlVariableSyntaxOverrides.value[dbType],
+    [key]: value,
+  };
+  const next: SqlVariableSyntaxOverrides = { ...editSqlVariableSyntaxOverrides.value };
+  // Keep storage sparse: an all-enabled type has no entry; otherwise persist only the disabled syntaxes.
+  if (SQL_VARIABLE_SYNTAX_KEYS.every((toggleKey) => merged[toggleKey])) {
+    delete next[dbType];
+  } else {
+    const partial: Partial<SqlVariableSyntaxToggles> = {};
+    for (const toggleKey of SQL_VARIABLE_SYNTAX_KEYS) {
+      if (!merged[toggleKey]) partial[toggleKey] = false;
+    }
+    next[dbType] = partial;
+  }
+  editSqlVariableSyntaxOverrides.value = next;
+}
 const tableColumnTemplateSectionRef = ref<HTMLElement | null>(null);
 const draggedTableColumnTemplateRowId = ref<string | null>(null);
 let tableColumnTemplatePointerDragCleanup: (() => void) | null = null;
@@ -372,6 +402,7 @@ function currentEditorSettingsDraft(): EditorSettingsDraft {
     dataGridQuickEntry: editDataGridQuickEntry.value,
     infiniteScroll: editInfiniteScroll.value,
     infiniteScrollMaxRows: editInfiniteScrollMaxRows.value,
+    autoCalculateTotalRows: editAutoCalculateTotalRows.value,
     tableColumnTemplateFields: normalizedEditTableColumnTemplateFields.value,
     shortcuts: editShortcuts.value,
     sqlFormatter: normalizeSqlFormatterSettings(editSqlFormatter.value),
@@ -393,6 +424,7 @@ function currentEditorSettingsDraft(): EditorSettingsDraft {
     updateDownloadSource: editUpdateDownloadSource.value,
     toolbarItems: { ...editToolbarItems.value },
     snippets: editSnippets.value,
+    sqlVariableSyntaxOverrides: editSqlVariableSyntaxOverrides.value,
   };
 }
 
@@ -408,6 +440,7 @@ const iconThemeDescRef = {
   default: ref<HTMLElement | null>(null),
   black: ref<HTMLElement | null>(null),
 };
+const iconThemeBlackDescriptionText = computed(() => (isMacOS() ? t("settings.iconThemeBlackDescriptionMac") : t("settings.iconThemeBlackDescription")));
 const layoutDescTruncated = { separated: ref<boolean>(false), classic: ref<boolean>(false) };
 const layoutDescRefs = {
   separated: ref<HTMLElement | null>(null),
@@ -426,7 +459,7 @@ function observeElementTruncation(el: Ref<HTMLElement | null>, truncated: Ref<bo
   if (!el.value) return;
 
   const observer = new ResizeObserver(() => {
-    truncated.value = el.value!.scrollWidth > el.value!.clientWidth;
+    truncated.value = checkElementTruncation(el.value);
   });
 
   observer.observe(el.value);
@@ -642,6 +675,7 @@ function syncEditorSettingsDraftFromStore() {
   editDataGridQuickEntry.value = settingsStore.editorSettings.dataGridQuickEntry;
   editInfiniteScroll.value = settingsStore.editorSettings.infiniteScroll;
   editInfiniteScrollMaxRows.value = settingsStore.editorSettings.infiniteScrollMaxRows;
+  editAutoCalculateTotalRows.value = settingsStore.editorSettings.autoCalculateTotalRows;
   editTableColumnTemplateRows.value = tableColumnTemplateRowsFromSettings(settingsStore.editorSettings.tableColumnTemplateFields);
   editShortcuts.value = normalizeShortcutSettings(settingsStore.editorSettings.shortcuts);
   editSqlFormatter.value = normalizeSqlFormatterSettings(settingsStore.editorSettings.sqlFormatter);
@@ -664,6 +698,7 @@ function syncEditorSettingsDraftFromStore() {
   editUpdateDownloadSource.value = settingsStore.editorSettings.updateDownloadSource;
   editToolbarItems.value = { ...settingsStore.editorSettings.toolbarItems };
   editSnippets.value = settingsStore.editorSettings.snippets.map(editableSnippet);
+  editSqlVariableSyntaxOverrides.value = normalizeSqlVariableSyntaxOverrides(settingsStore.editorSettings.sqlVariableSyntaxOverrides);
   editEditorSettingsBase.value = editorSettingsDraftFromSettings(settingsStore.editorSettings);
 }
 
@@ -818,6 +853,7 @@ function resetDefaultsForTab(tab: SettingsCategory) {
     editSqlSemanticDiagnosticsEnabled.value = DEFAULT_EDITOR_SETTINGS.sqlSemanticDiagnosticsEnabled;
     editConfirmDangerousSqlExecution.value = DEFAULT_EDITOR_SETTINGS.confirmDangerousSqlExecution;
     editConfirmUnsavedSqlClose.value = DEFAULT_EDITOR_SETTINGS.confirmUnsavedSqlClose;
+    editSqlVariableSyntaxOverrides.value = normalizeSqlVariableSyntaxOverrides(DEFAULT_EDITOR_SETTINGS.sqlVariableSyntaxOverrides);
   } else if (tab === "formatter") {
     editSqlFormatter.value = normalizeSqlFormatterSettings(DEFAULT_EDITOR_SETTINGS.sqlFormatter);
     sqlFormatterConfigValid.value = true;
@@ -854,6 +890,7 @@ function resetDefaultsForTab(tab: SettingsCategory) {
     editDataGridQuickEntry.value = DEFAULT_EDITOR_SETTINGS.dataGridQuickEntry;
     editInfiniteScroll.value = DEFAULT_EDITOR_SETTINGS.infiniteScroll;
     editInfiniteScrollMaxRows.value = DEFAULT_EDITOR_SETTINGS.infiniteScrollMaxRows;
+    editAutoCalculateTotalRows.value = DEFAULT_EDITOR_SETTINGS.autoCalculateTotalRows;
     editDuckDbWorkerProcessIsolation.value = DEFAULT_DESKTOP_SETTINGS.duckdb_worker_process_isolation;
     editDuckDbWorkerMaxProcesses.value = DEFAULT_DESKTOP_SETTINGS.duckdb_worker_max_processes;
     editTableColumnTemplateRows.value = tableColumnTemplateRowsFromSettings(DEFAULT_EDITOR_SETTINGS.tableColumnTemplateFields);
@@ -890,6 +927,7 @@ function resetAllDefaults() {
   editSqlSemanticDiagnosticsEnabled.value = DEFAULT_EDITOR_SETTINGS.sqlSemanticDiagnosticsEnabled;
   editConfirmDangerousSqlExecution.value = DEFAULT_EDITOR_SETTINGS.confirmDangerousSqlExecution;
   editConfirmUnsavedSqlClose.value = DEFAULT_EDITOR_SETTINGS.confirmUnsavedSqlClose;
+  editSqlVariableSyntaxOverrides.value = normalizeSqlVariableSyntaxOverrides(DEFAULT_EDITOR_SETTINGS.sqlVariableSyntaxOverrides);
   editAppLayout.value = DEFAULT_EDITOR_SETTINGS.appLayout;
   editShowTrayIcon.value = DEFAULT_DESKTOP_SETTINGS.show_tray_icon;
   editQuitOnClose.value = DEFAULT_DESKTOP_SETTINGS.quit_on_close;
@@ -905,6 +943,7 @@ function resetAllDefaults() {
   editDataGridQuickEntry.value = DEFAULT_EDITOR_SETTINGS.dataGridQuickEntry;
   editInfiniteScroll.value = DEFAULT_EDITOR_SETTINGS.infiniteScroll;
   editInfiniteScrollMaxRows.value = DEFAULT_EDITOR_SETTINGS.infiniteScrollMaxRows;
+  editAutoCalculateTotalRows.value = DEFAULT_EDITOR_SETTINGS.autoCalculateTotalRows;
   editTableColumnTemplateRows.value = tableColumnTemplateRowsFromSettings(DEFAULT_EDITOR_SETTINGS.tableColumnTemplateFields);
   editShortcuts.value = normalizeShortcutSettings(DEFAULT_EDITOR_SETTINGS.shortcuts);
   editSqlFormatter.value = normalizeSqlFormatterSettings(DEFAULT_EDITOR_SETTINGS.sqlFormatter);
@@ -1206,13 +1245,14 @@ const appSupportInfoLabels = computed<AppSupportInfoLabels>(() => ({
   unknown: t("settings.supportInfoUnknown"),
 }));
 const appSupportInfoRows = computed(() => (appSupportInfo.value ? buildAppSupportInfoRows(appSupportInfo.value, appSupportInfoLabels.value) : []));
-type SettingsCategory = "editor" | "formatter" | "appearance" | "navigation" | "data" | "shortcuts" | "snippets" | "sync" | "ai" | "mcp" | "security" | "about";
+type SettingsCategory = "editor" | "formatter" | "appearance" | "navigation" | "data" | "tunnels" | "shortcuts" | "snippets" | "sync" | "ai" | "mcp" | "security" | "about";
 const settingsCategoryNav = computed<{ value: SettingsCategory; label: string }[]>(() => [
   { value: "appearance", label: t("settings.appearanceTab") },
   { value: "editor", label: t("settings.editorTab") },
   { value: "formatter", label: t("settings.sqlFormatterTab") },
   { value: "navigation", label: t("settings.navigationTab") },
   { value: "data", label: t("settings.dataTab") },
+  { value: "tunnels", label: t("settings.tunnelsTab") },
   { value: "shortcuts", label: t("settings.shortcutsTab") },
   { value: "snippets", label: t("settings.snippetsTab") },
   ...(isWeb ? [] : [{ value: "sync" as const, label: t("settings.syncTab") }]),
@@ -1228,7 +1268,10 @@ function hasSettingsApplyFooter(value: SettingsCategory): boolean {
 }
 
 function settingsCategoryButton(value: SettingsCategory): string {
-  return ["w-auto shrink-0 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm transition-colors lg:w-full", value === activeSettingsTab.value ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"].join(" ");
+  return [
+    "settings-category-button w-auto shrink-0 whitespace-nowrap rounded-md px-3 py-2 text-left text-sm transition-colors lg:w-full",
+    value === activeSettingsTab.value ? "settings-category-button--active bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+  ].join(" ");
 }
 
 function openExternalUrl(url: string) {
@@ -2555,8 +2598,8 @@ onUnmounted(cleanupPreviewEditor);
         </component>
       </DialogHeader>
 
-      <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden lg:flex-row">
-        <nav class="settingsCategoryNav flex min-h-0 shrink-0 gap-1 overflow-x-auto border-b pb-3 lg:w-40 lg:flex-col lg:overflow-x-hidden lg:overflow-y-auto lg:border-b-0 lg:border-r lg:pb-0 lg:pr-3">
+      <div class="settings-layout flex min-h-0 flex-1 flex-col gap-3 overflow-hidden lg:flex-row">
+        <nav class="settingsCategoryNav settings-category-nav flex min-h-0 shrink-0 gap-1 overflow-x-auto border-b pb-3 lg:w-40 lg:flex-col lg:overflow-x-hidden lg:overflow-y-auto lg:border-b-0 lg:border-r lg:pb-0 lg:pr-3">
           <button v-for="category in settingsCategoryNav" :key="category.value" type="button" :class="settingsCategoryButton(category.value)" @click="activeSettingsTab = category.value">
             {{ category.label }}
           </button>
@@ -2747,6 +2790,39 @@ onUnmounted(cleanupPreviewEditor);
 
               <Separator />
 
+              <div class="space-y-3">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                  <div class="space-y-1">
+                    <div class="text-sm font-medium text-muted-foreground">{{ t("settings.sqlVariableSyntax") }}</div>
+                    <p class="text-xs text-muted-foreground">{{ t("settings.sqlVariableSyntaxDescription") }}</p>
+                  </div>
+                  <Select v-model="editSqlVariableSyntaxDatabaseType">
+                    <SelectTrigger class="h-8 w-44 px-2 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent class="max-h-72">
+                      <SelectItem v-for="dbType in SQL_VARIABLE_SYNTAX_DATABASE_TYPES" :key="dbType" :value="dbType">
+                        {{ dbType }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div class="grid gap-3 md:grid-cols-2">
+                  <div v-for="key in SQL_VARIABLE_SYNTAX_KEYS" :key="key" class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+                    <div class="min-w-0 space-y-1">
+                      <Label :for="`sql-var-syntax-${key}`" class="flex items-center gap-1.5">
+                        <span class="font-mono text-xs text-primary">{{ SQL_VARIABLE_SYNTAX_TOKENS[key] }}</span>
+                        <span>{{ t(`settings.sqlVariableSyntax_${key}`) }}</span>
+                      </Label>
+                      <p class="text-xs text-muted-foreground">{{ t(`settings.sqlVariableSyntax_${key}Description`) }}</p>
+                    </div>
+                    <Switch :id="`sql-var-syntax-${key}`" :model-value="sqlVariableSyntaxToggle(key)" class="mt-0.5 shrink-0" @update:model-value="(value) => setSqlVariableSyntaxToggle(key, value as boolean)" />
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+
               <!-- Live Preview -->
               <div class="space-y-2">
                 <Label>{{ t("settings.preview") }}</Label>
@@ -2827,9 +2903,9 @@ onUnmounted(cleanupPreviewEditor);
               <SqlFormatterSettingsPanel v-model="editSqlFormatter" @validity-change="(value: boolean) => (sqlFormatterConfigValid = value)" />
             </section>
 
-            <section v-else-if="activeSettingsTab === 'appearance'" class="flex flex-col gap-5 py-2">
-              <div class="grid gap-x-1.5 gap-y-4 sm:grid-cols-[minmax(0,127fr)_minmax(0,127fr)_minmax(0,191fr)_minmax(0,130fr)]">
-                <div class="space-y-2 min-w-0">
+            <section v-else-if="activeSettingsTab === 'appearance'" class="settings-appearance-section flex flex-col gap-5 py-2">
+              <div class="settings-appearance-top-grid">
+                <div class="settings-appearance-field min-w-0">
                   <div class="flex h-9 items-end">
                     <Label class="whitespace-normal leading-tight">{{ t("settings.languageTitle") }}</Label>
                   </div>
@@ -2857,7 +2933,7 @@ onUnmounted(cleanupPreviewEditor);
                   </Select>
                 </div>
 
-                <div class="space-y-2 min-w-0">
+                <div class="settings-appearance-field min-w-0">
                   <div class="flex h-9 items-end">
                     <Label class="whitespace-normal leading-tight">{{ t("settings.colorTheme") }}</Label>
                   </div>
@@ -2881,7 +2957,7 @@ onUnmounted(cleanupPreviewEditor);
                   </Select>
                 </div>
 
-                <div class="space-y-2 min-w-0">
+                <div class="settings-appearance-field min-w-0">
                   <div class="flex h-9 items-end gap-1">
                     <Label class="min-w-0 whitespace-normal leading-tight">{{ t("settings.uiFontFamily") }}</Label>
                     <HelpTooltip :label="t('settings.uiFontFamily')" trigger-class="[&_svg]:h-3 [&_svg]:w-3" content-class="max-w-64">
@@ -2920,7 +2996,7 @@ onUnmounted(cleanupPreviewEditor);
                   </SearchableSelect>
                 </div>
 
-                <div class="space-y-2 min-w-0">
+                <div class="settings-appearance-field min-w-0">
                   <div class="flex h-9 items-end gap-1">
                     <Label class="min-w-0 whitespace-normal leading-tight">{{ t("settings.uiScale") }}</Label>
                     <HelpTooltip :label="t('settings.uiScale')" trigger-class="[&_svg]:h-3 [&_svg]:w-3" content-class="max-w-64">
@@ -2946,17 +3022,17 @@ onUnmounted(cleanupPreviewEditor);
                 </div>
               </div>
 
-              <div class="space-y-2">
+              <div class="settings-appearance-group">
                 <Label>{{ t("settings.theme") }}</Label>
-                <div class="flex flex-wrap gap-2">
+                <div class="settings-appearance-button-row flex flex-wrap gap-2">
                   <Button
                     v-for="option in appThemeModeOptions"
                     :key="option.value"
                     type="button"
                     variant="outline"
                     size="sm"
-                    class="h-8 gap-1.5 rounded-[6px] px-3"
-                    :class="themeMode === option.value ? 'border-primary/40 bg-primary/10 text-primary ring-1 ring-primary/30' : 'text-foreground'"
+                    class="settings-choice-button h-8 gap-1.5 rounded-[6px] px-3"
+                    :class="themeMode === option.value ? 'settings-choice-button--selected border-primary/40 bg-primary/10 text-primary ring-1 ring-primary/30' : 'text-foreground'"
                     @click="setThemeMode(option.value)"
                   >
                     <component :is="option.icon" class="h-3.5 w-3.5" />
@@ -2967,10 +3043,10 @@ onUnmounted(cleanupPreviewEditor);
 
               <Separator />
 
-              <div class="space-y-2">
+              <div class="settings-appearance-group">
                 <Label>{{ t("settings.appLayout") }}</Label>
-                <div class="grid grid-cols-2 gap-2">
-                  <Button type="button" variant="outline" class="h-auto justify-start border p-3" :class="editAppLayout === 'separated' ? 'border-blue-300 ring-2 ring-blue-300/50' : ''" @click="setAppLayout('separated')">
+                <div class="settings-appearance-choice-grid">
+                  <Button type="button" variant="outline" class="settings-choice-card h-auto justify-start border p-3" :class="editAppLayout === 'separated' ? 'settings-choice-card--selected border-blue-300 ring-2 ring-blue-300/50' : ''" @click="setAppLayout('separated')">
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger as-child>
@@ -2985,7 +3061,7 @@ onUnmounted(cleanupPreviewEditor);
                       </Tooltip>
                     </TooltipProvider>
                   </Button>
-                  <Button type="button" variant="outline" class="h-auto justify-start border p-3" :class="editAppLayout === 'classic' ? 'border-blue-300 ring-2 ring-blue-300/50' : ''" @click="setAppLayout('classic')">
+                  <Button type="button" variant="outline" class="settings-choice-card h-auto justify-start border p-3" :class="editAppLayout === 'classic' ? 'settings-choice-card--selected border-blue-300 ring-2 ring-blue-300/50' : ''" @click="setAppLayout('classic')">
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger as-child>
@@ -3004,12 +3080,12 @@ onUnmounted(cleanupPreviewEditor);
               </div>
 
               <!-- <div v-if="!isWeb" class="space-y-2"> -->
-              <div class="space-y-2">
+              <div class="settings-appearance-group">
                 <Label>{{ t("settings.iconTheme") }}</Label>
-                <div class="grid grid-cols-2 gap-2">
-                  <Button type="button" variant="outline" class="h-auto justify-start border p-3" :class="editIconTheme === 'default' ? 'border-blue-300 ring-2 ring-blue-300/50' : ''" @click="setIconTheme('default')">
+                <div class="settings-appearance-choice-grid">
+                  <Button type="button" variant="outline" class="settings-choice-card h-auto justify-start border p-3" :class="editIconTheme === 'default' ? 'settings-choice-card--selected border-blue-300 ring-2 ring-blue-300/50' : ''" @click="setIconTheme('default')">
                     <div class="flex items-center gap-3 text-left w-full min-w-0">
-                      <img src="/logo.png" alt="DBX" class="h-8 w-8 rounded-md" />
+                      <img src="/icon-preview-default.png" alt="DBX" class="h-12 w-12 shrink-0" />
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger as-child>
@@ -3025,19 +3101,19 @@ onUnmounted(cleanupPreviewEditor);
                       </TooltipProvider>
                     </div>
                   </Button>
-                  <Button type="button" variant="outline" class="h-auto justify-start border p-3" :class="editIconTheme === 'black' ? 'border-blue-300 ring-2 ring-blue-300/50' : ''" @click="setIconTheme('black')">
+                  <Button type="button" variant="outline" class="settings-choice-card h-auto justify-start border p-3" :class="editIconTheme === 'black' ? 'settings-choice-card--selected border-blue-300 ring-2 ring-blue-300/50' : ''" @click="setIconTheme('black')">
                     <div class="flex items-center gap-3 text-left w-full min-w-0">
-                      <img src="/logo-black.png" alt="DBX" class="h-8 w-8 dark:invert shrink-0" />
+                      <img src="/icon-preview-black.png" alt="DBX" class="h-12 w-12 shrink-0" />
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger as-child>
                             <div class="w-full min-w-0 text-left">
                               <div class="text-sm font-medium">{{ t("settings.iconThemeBlack") }}</div>
-                              <div :ref="(el) => setIconThemeDescRef('black', el)" class="text-xs text-muted-foreground truncate">{{ t("settings.iconThemeBlackDescription") }}</div>
+                              <div :ref="(el) => setIconThemeDescRef('black', el)" class="text-xs text-muted-foreground truncate">{{ iconThemeBlackDescriptionText }}</div>
                             </div>
                           </TooltipTrigger>
                           <TooltipContent v-if="iconThemeDescTruncated.black.value" class="max-w-[320px] text-xs leading-relaxed">
-                            {{ t("settings.iconThemeBlackDescription") }}
+                            {{ iconThemeBlackDescriptionText }}
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
@@ -3097,7 +3173,7 @@ onUnmounted(cleanupPreviewEditor);
 
               <Separator />
 
-              <div class="space-y-3">
+              <div class="settings-appearance-group settings-option-stack">
                 <Label>{{ t("settings.dataGridDisplay") }}</Label>
                 <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
                   <div class="space-y-1">
@@ -3172,6 +3248,17 @@ onUnmounted(cleanupPreviewEditor);
                     :max="50000"
                     class="h-7 w-24 px-2 text-xs tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                   />
+                </div>
+                <div class="flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
+                  <div class="space-y-1">
+                    <Label for="auto-calculate-total-rows">
+                      {{ t("settings.autoCalculateTotalRows") }}
+                    </Label>
+                    <p class="text-xs text-muted-foreground">
+                      {{ t("settings.autoCalculateTotalRowsDescription") }}
+                    </p>
+                  </div>
+                  <Switch id="auto-calculate-total-rows" v-model="editAutoCalculateTotalRows" />
                 </div>
               </div>
 
@@ -4411,6 +4498,10 @@ onUnmounted(cleanupPreviewEditor);
               </div>
             </section>
 
+            <section v-else-if="activeSettingsTab === 'tunnels'" class="flex flex-col gap-5 py-2">
+              <TunnelProfileManager />
+            </section>
+
             <section v-else-if="activeSettingsTab === 'about'" class="flex flex-col gap-5 py-2">
               <div class="rounded-lg border p-4">
                 <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -4660,3 +4751,120 @@ onUnmounted(cleanupPreviewEditor);
     </Dialog>
   </component>
 </template>
+
+<style>
+@media (min-width: 1024px) {
+  .settings-layout {
+    flex-direction: row !important;
+  }
+
+  .settings-category-nav {
+    width: 10rem !important;
+    flex-direction: column !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    border-bottom-width: 0 !important;
+    border-right: 1px solid var(--border) !important;
+    padding-bottom: 0 !important;
+    padding-right: 0.75rem !important;
+  }
+
+  .settings-category-button {
+    width: 100% !important;
+    text-align: left !important;
+  }
+}
+
+.settings-category-button--active {
+  background-color: rgb(23, 23, 23) !important;
+  color: rgb(255, 255, 255) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.settings-choice-button {
+  color: rgb(23, 23, 23);
+}
+
+.settings-choice-button--selected {
+  border-color: rgb(96, 165, 250) !important;
+  background-color: rgba(59, 130, 246, 0.1) !important;
+  color: rgb(29, 78, 216) !important;
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.45) !important;
+}
+
+.settings-choice-button--selected svg {
+  color: currentColor !important;
+}
+
+.settings-choice-card--selected {
+  border-color: rgb(96, 165, 250) !important;
+  background-color: rgba(59, 130, 246, 0.04) !important;
+  color: rgb(23, 23, 23) !important;
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.45) !important;
+}
+
+.settings-appearance-section > * + * {
+  margin-top: 1.25rem;
+}
+
+.settings-appearance-top-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  column-gap: 0.75rem;
+  row-gap: 1rem;
+}
+
+.settings-appearance-field > * + * {
+  margin-top: 0.5rem;
+}
+
+.settings-appearance-group > * + * {
+  margin-top: 0.625rem;
+}
+
+.settings-appearance-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.settings-appearance-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.625rem;
+}
+
+.settings-option-stack > * + * {
+  margin-top: 0.625rem;
+}
+
+@media (max-width: 760px) {
+  .settings-appearance-top-grid,
+  .settings-appearance-choice-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dark .settings-category-button--active {
+  background-color: rgb(245, 245, 245) !important;
+  color: rgb(23, 23, 23) !important;
+}
+
+.dark .settings-choice-button {
+  color: rgb(245, 245, 245);
+}
+
+.dark .settings-choice-button--selected {
+  border-color: rgb(147, 197, 253) !important;
+  background-color: rgba(96, 165, 250, 0.18) !important;
+  color: rgb(191, 219, 254) !important;
+  box-shadow: 0 0 0 1px rgba(147, 197, 253, 0.5) !important;
+}
+
+.dark .settings-choice-card--selected {
+  border-color: rgb(147, 197, 253) !important;
+  background-color: rgba(96, 165, 250, 0.12) !important;
+  color: rgb(245, 245, 245) !important;
+  box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.45) !important;
+}
+</style>

@@ -25,6 +25,7 @@ import type {
   DatabaseType,
   InstalledPlugin,
   JdbcDriverInfo,
+  JdbcLocalBundleInfo,
   JdbcMavenBundleInfo,
   JdbcPluginStatus,
   SidebarLayout,
@@ -32,6 +33,7 @@ import type {
   SavedSqlFolder,
   SavedSqlLibrary,
   SshConfigHostEntry,
+  TunnelProfile,
 } from "@/types/database";
 import type { CollectionInfo } from "@/types/database";
 import type { SchemaDiffPreparation, SchemaDiffPreparationOptions, TableDiff, FunctionDiff, SequenceDiff, RuleDiff, OwnerDiff } from "@/lib/schema/schemaDiff";
@@ -112,7 +114,7 @@ import type {
   DataGridSaveStatementOptions,
   HiveTablePropertiesSqlOptions,
 } from "@/lib/dataGrid/dataGridSql";
-import type { BuildTableStructureChangeSqlOptions, BuildSingleColumnAlterSqlOptions, TableStructureChangeSql } from "@/lib/table/tableStructureEditorSql";
+import type { BuildTableStructureChangeSqlOptions, BuildSingleColumnAlterSqlOptions, SqliteTableStructureChangePreview, TableStructureChangeSql } from "@/lib/table/tableStructureEditorSql";
 import type { BuildTableSelectSqlOptions } from "@/lib/table/tableSelectSql";
 import type { DatabaseSearchSql, DatabaseSearchSqlOptions, SearchResultWhereOptions } from "@/lib/database/databaseSearch";
 import type { BuildEditableObjectSourceSqlInput, BuildRoutineRenameObjectSourceInput } from "@/lib/table/objectSourceEditor";
@@ -235,6 +237,14 @@ export async function loadConnections(): Promise<ConnectionConfig[]> {
   return get("/api/connection/list");
 }
 
+export async function loadTunnelProfiles(): Promise<TunnelProfile[]> {
+  return get("/api/tunnel-profiles/list");
+}
+
+export async function saveTunnelProfiles(profiles: TunnelProfile[]): Promise<void> {
+  return post("/api/tunnel-profiles/save", { profiles });
+}
+
 export async function readKeychainPassword(_service: string): Promise<string> {
   return ""; // Not available in web backend
 }
@@ -265,6 +275,10 @@ export async function listJdbcDrivers(): Promise<JdbcDriverInfo[]> {
 
 export async function listJdbcMavenBundles(): Promise<JdbcMavenBundleInfo[]> {
   return get("/api/jdbc/drivers/maven");
+}
+
+export async function listJdbcLocalBundles(): Promise<JdbcLocalBundleInfo[]> {
+  return get("/api/jdbc/drivers/local");
 }
 
 export async function importJdbcDrivers(pathsOrFiles: (string | File)[]): Promise<JdbcDriverInfo[]> {
@@ -300,6 +314,10 @@ export async function deleteJdbcMavenBundle(bundleId: string): Promise<JdbcDrive
   return del(`/api/jdbc/drivers/maven/${encodeURIComponent(bundleId)}`);
 }
 
+export async function deleteJdbcLocalBundle(bundleId: string): Promise<JdbcDriverInfo[]> {
+  return del(`/api/jdbc/drivers/local/${encodeURIComponent(bundleId)}`);
+}
+
 export async function jdbcPluginStatus(): Promise<JdbcPluginStatus> {
   return get("/api/jdbc/plugin/status");
 }
@@ -333,7 +351,7 @@ export async function listInstalledAgentsLocal(): Promise<AgentDriverInfo[]> {
   return get("/api/agents/installed-local");
 }
 
-export async function listInstalledAgents(): Promise<AgentDriverInfo[]> {
+export async function listInstalledAgents(_source?: UpdateDownloadSource): Promise<AgentDriverInfo[]> {
   return get("/api/agents/installed");
 }
 
@@ -361,11 +379,11 @@ export async function restartDriverRuntime(runtimeId: string): Promise<void> {
   await post("/api/agents/runtime/restart", { runtimeId });
 }
 
-export async function installAgent(dbType: string): Promise<void> {
+export async function installAgent(dbType: string, _source?: UpdateDownloadSource): Promise<void> {
   await post("/api/agents/install", { dbType });
 }
 
-export async function upgradeAllAgents(): Promise<UpgradeAllAgentDriversResult> {
+export async function upgradeAllAgents(_source?: UpdateDownloadSource): Promise<UpgradeAllAgentDriversResult> {
   return post("/api/agents/upgrade-all", {});
 }
 
@@ -418,7 +436,7 @@ export async function importAgentJar(dbType: string, pathOrFile: string | File):
   if (!uploadRes.ok) throw new Error(await uploadRes.text());
 }
 
-export async function reinstallJre(jreKey?: string): Promise<void> {
+export async function reinstallJre(jreKey?: string, _source?: UpdateDownloadSource): Promise<void> {
   await post("/api/agents/reinstall-jre", { jreKey });
 }
 
@@ -853,6 +871,14 @@ export async function buildViewDdlSql(input: BuildViewDdlInput): Promise<string>
 
 export async function buildTableStructureChangeSql(options: BuildTableStructureChangeSqlOptions): Promise<TableStructureChangeSql> {
   return post("/api/query/build-table-structure-change-sql", { options });
+}
+
+export async function previewSqliteTableStructureChange(connectionId: string, database: string, options: BuildTableStructureChangeSqlOptions): Promise<SqliteTableStructureChangePreview> {
+  return post("/api/query/preview-sqlite-table-structure-change", { connectionId, database, options });
+}
+
+export async function applySqliteTableStructureChange(connectionId: string, database: string, options: BuildTableStructureChangeSqlOptions, schemaRevision: string): Promise<QueryResult> {
+  return post("/api/query/apply-sqlite-table-structure-change", { connectionId, database, options, schemaRevision });
 }
 
 export async function buildCreateTableSql(options: BuildTableStructureChangeSqlOptions): Promise<TableStructureChangeSql> {
@@ -1665,11 +1691,12 @@ function downloadTextFile(filePath: string, fallbackFileName: string, content: s
   URL.revokeObjectURL(url);
 }
 
-export async function exportQueryResultXlsx(filePath: string, sheetName: string | undefined, columns: string[], rows: readonly (readonly XlsxCellValue[])[]): Promise<void> {
+export async function exportQueryResultXlsx(filePath: string, sheetName: string | undefined, columns: string[], columnTypes: string[], rows: readonly (readonly XlsxCellValue[])[]): Promise<void> {
   const { buildXlsxWorkbook } = await import("@/lib/export/xlsxExport");
   const workbook = buildXlsxWorkbook({
     sheetName: sheetName || "Export",
     columns,
+    columnTypes,
     rows,
   });
   const fileName = filePath.split(/[\\/]/).pop() || "export.xlsx";
@@ -1684,7 +1711,7 @@ export async function exportQueryResultXlsx(filePath: string, sheetName: string 
   URL.revokeObjectURL(url);
 }
 
-export async function exportQueryResultsXlsx(filePath: string, worksheets: readonly { sheetName?: string; columns: string[]; rows: readonly (readonly XlsxCellValue[])[] }[]): Promise<void> {
+export async function exportQueryResultsXlsx(filePath: string, worksheets: readonly { sheetName?: string; columns: string[]; columnTypes?: string[]; rows: readonly (readonly XlsxCellValue[])[] }[]): Promise<void> {
   const { buildXlsxWorkbookMulti } = await import("@/lib/export/xlsxExport");
   const workbook = buildXlsxWorkbookMulti(worksheets);
   const fileName = filePath.split(/[\\/]/).pop() || "export.xlsx";
@@ -2071,8 +2098,8 @@ export async function documentUpdateDocument(connectionId: string, database: str
   return post("/api/document-store/update-document", { connectionId, database, collection, id, docJson, routing });
 }
 
-export async function mongoUpdateDocuments(connectionId: string, database: string, collection: string, filterJson: string, updateJson: string, many: boolean): Promise<{ affected_rows: number }> {
-  return post("/api/mongo/update-documents", { connectionId, database, collection, filterJson, updateJson, many });
+export async function mongoUpdateDocuments(connectionId: string, database: string, collection: string, filterJson: string, updateJson: string, many: boolean, optionsJson?: string): Promise<{ affected_rows: number }> {
+  return post("/api/mongo/update-documents", { connectionId, database, collection, filterJson, updateJson, many, optionsJson });
 }
 
 export async function mongoDeleteDocument(connectionId: string, database: string, collection: string, id: string, routing?: string): Promise<number> {

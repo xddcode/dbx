@@ -117,6 +117,9 @@ export function tabTooltipLines(tab: QueryTab, t: Translate): { label: string; v
   if (tab.mode === "query" && queryTitle(tab)) {
     lines.unshift({ label: t("tabs.tooltipTitle"), value: tab.title });
   }
+  if (tab.mode === "query" && tab.externalSqlPath) {
+    lines.push({ label: t("tabs.tooltipFilePath"), value: tab.externalSqlPath });
+  }
   if (tab.mode === "data" && tab.tableMeta?.tableName) {
     lines.push({ label: t("tabs.tooltipTable"), value: tab.tableMeta.tableName });
   }

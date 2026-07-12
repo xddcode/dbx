@@ -88,6 +88,10 @@ export interface TableStructureChangeSql {
   warnings: string[];
 }
 
+export interface SqliteTableStructureChangePreview extends TableStructureChangeSql {
+  schemaRevision: string;
+}
+
 export interface BuildSingleColumnAlterSqlOptions {
   databaseType?: DatabaseType;
   schema?: string;

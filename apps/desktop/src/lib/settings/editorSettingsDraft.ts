@@ -26,6 +26,7 @@ export const EDITOR_SETTINGS_DRAFT_KEYS = [
   "dataGridQuickEntry",
   "infiniteScroll",
   "infiniteScrollMaxRows",
+  "autoCalculateTotalRows",
   "tableColumnTemplateFields",
   "shortcuts",
   "sqlFormatter",
@@ -47,6 +48,7 @@ export const EDITOR_SETTINGS_DRAFT_KEYS = [
   "updateDownloadSource",
   "toolbarItems",
   "snippets",
+  "sqlVariableSyntaxOverrides",
 ] as const satisfies readonly (keyof EditorSettings)[];
 
 export type EditorSettingsDraftKey = (typeof EDITOR_SETTINGS_DRAFT_KEYS)[number];

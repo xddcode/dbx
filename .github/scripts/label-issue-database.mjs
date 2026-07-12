@@ -157,9 +157,95 @@ function extractPriorityField(body) {
   ));
 }
 
+function extractTitleSummaryField(body) {
+  const headingPredicates = [
+    (heading) => heading.includes("问题描述") || heading.toLowerCase().includes("description"),
+    (heading) => heading.includes("当前痛点") || heading.toLowerCase().includes("problem"),
+    (heading) => heading.includes("期望方案") || heading.toLowerCase().includes("proposal"),
+    (heading) => heading === "描述" || heading.toLowerCase() === "description",
+  ];
+
+  for (const predicate of headingPredicates) {
+    const section = extractIssueFormSection(body, predicate);
+    if (section) return section;
+  }
+
+  return "";
+}
+
 function matchPriorityLabel(value) {
   const match = String(value || "").normalize("NFKC").match(/\bP([0-3])\b/i);
   return match ? `P${match[1]}` : null;
+}
+
+function genericIssueTitlePrefix(title) {
+  const normalized = String(title || "").normalize("NFKC").trim().replace(/\s+/g, " ");
+  const bracketMatch = normalized.match(/^([\[【][^\]】]*(?:bug|feature|feat|compatibility|question)[^\]】]*[\]】])$/i);
+  if (bracketMatch) return bracketMatch[1];
+
+  const bareMatch = normalized.match(/^(bug|feature|feat|compatibility|question):?$/i);
+  if (!bareMatch) return null;
+
+  const normalizedPrefix = bareMatch[1].toLowerCase() === "feat" ? "Feat" : (
+    bareMatch[1].charAt(0).toUpperCase() + bareMatch[1].slice(1).toLowerCase()
+  );
+  return `[${normalizedPrefix}]`;
+}
+
+function cleanTitleSummaryLine(line) {
+  return String(line || "")
+    .replace(/<img\b[^>]*>/gi, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/^>\s*/, "")
+    .replace(/^[-*]\s+/, "")
+    .replace(/^\d+[.)、]\s*/, "")
+    .replace(/!\[[^\]]*?\]\([^)]*?\)/g, "")
+    .replace(/\[[^\]]*?\]\([^)]*?\)/g, "")
+    .replace(/[`*_~]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isSkippableTitleSummaryLine(line) {
+  return (
+    /^DBX debug log$/i.test(line) ||
+    /^(Exported|User agent|Platform|Timezone):/i.test(line) ||
+    /^(Native|Tauri) log dir:/i.test(line) ||
+    /^=+.*logs?.*=+$/i.test(line) ||
+    /^\[\d{4}-\d{2}-\d{2}(?:T|\])/.test(line) ||
+    /^\[(DEBUG|INFO|WARN|ERROR|LOG|STARTUP)\]/i.test(line)
+  );
+}
+
+function firstSentence(value) {
+  const withoutCodeBlocks = String(value || "").replace(/```[\s\S]*?```/g, "\n");
+  const lines = withoutCodeBlocks
+    .split(/\r?\n/)
+    .map(cleanTitleSummaryLine)
+    .filter((line) => !isSkippableTitleSummaryLine(line))
+    .filter((line) => /[\p{L}\p{N}\u3400-\u9fff]/u.test(line));
+
+  for (const line of lines) {
+    const sentenceMatch = line.match(/^(.{4,120}?[。！？!?]|.{12,120}?\.(?=\s|$))/u);
+    const sentence = (sentenceMatch ? sentenceMatch[1] : line)
+      .replace(/[。！？!?.]+$/u, "")
+      .trim();
+    if (sentence.length >= 4) {
+      return sentence.length > 90 ? `${sentence.slice(0, 89)}…` : sentence;
+    }
+  }
+
+  return "";
+}
+
+function inferIssueTitle(title, body) {
+  const prefix = genericIssueTitlePrefix(title);
+  if (!prefix) return null;
+
+  const summary = firstSentence(extractTitleSummaryField(body));
+  if (!summary) return null;
+
+  return `${prefix} ${summary}`;
 }
 
 function normalizeText(value) {
@@ -366,6 +452,10 @@ async function removeLabel(issueNumber, name) {
   }
 }
 
+async function updateIssueTitle(issueNumber, title) {
+  await githubRequest("PATCH", `/issues/${issueNumber}`, { title });
+}
+
 const issue = loadIssue();
 if (issue.pull_request) {
   console.log("Skipping pull request event");
@@ -408,6 +498,7 @@ if (targetPriorityValue) {
   targetLabelColors[targetPriorityLabel] = USER_PRIORITY_LABELS[targetPriorityValue].color;
 }
 const existingLabels = labelNames(issue.labels);
+const titleToUpdate = inferIssueTitle(issue.title || "", issue.body || "");
 const existingDatabaseLabels = existingLabels.filter((name) => name.startsWith(LABEL_PREFIX));
 const staleDatabaseLabels = hasDatabaseField
   ? existingDatabaseLabels.filter((name) => !targetLabels.includes(name))
@@ -438,6 +529,7 @@ console.log(
       priorityField: priorityField || null,
       priorityLabel: targetPriorityLabel,
       priorityValue: targetPriorityValue,
+      titleToUpdate,
       labelsToAdd,
       targetLabelColors,
       staleDatabaseLabels,
@@ -470,4 +562,9 @@ for (const label of staleDatabaseLabels) {
 
 for (const label of stalePriorityLabels) {
   await removeLabel(issue.number, label);
+}
+
+if (titleToUpdate) {
+  await updateIssueTitle(issue.number, titleToUpdate);
+  console.log(`Updated title: ${titleToUpdate}`);
 }

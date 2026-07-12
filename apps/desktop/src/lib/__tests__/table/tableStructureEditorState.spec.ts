@@ -3,7 +3,12 @@ import {
   combineDataTypeForDatabase,
   createColumnDrafts,
   dataTypeLengthInputValue,
+  DATA_TYPE_OPTIONS,
+  defaultNewColumnDataType,
+  getDefaultLengthForType,
+  hasExistingColumnTypeChange,
   isDataTypeLengthDisabled,
+  isDamengIdentityCompatibleDataType,
   isMysqlCharacterDataType,
   isMysqlEnumDataType,
   isSqlServerIdentityCompatibleDataType,
@@ -96,6 +101,64 @@ describe("tableStructureEditorState", () => {
     expect(combineDataTypeForDatabase("mysql", "integer", "11")).toBe("integer(11)");
   });
 
+  it("does not add MySQL display lengths when choosing SQLite-family types", () => {
+    for (const databaseType of ["sqlite", "rqlite", "turso"] as const) {
+      expect(getDefaultLengthForType(databaseType, "integer")).toBe("");
+      expect(getDefaultLengthForType(databaseType, "real")).toBe("");
+      expect(combineDataTypeForDatabase(databaseType, "integer", getDefaultLengthForType(databaseType, "integer"))).toBe("integer");
+    }
+
+    expect(getDefaultLengthForType("mysql", "integer")).toBe("11");
+  });
+
+  it("uses MySQL 8-safe defaults only when the native MySQL profile is known", () => {
+    const mysql8Defaults = { omitMysqlDeprecatedDefaults: true };
+
+    expect(getDefaultLengthForType("mysql", "int", mysql8Defaults)).toBe("");
+    expect(getDefaultLengthForType("mysql", "bigint unsigned", mysql8Defaults)).toBe("");
+    expect(getDefaultLengthForType("mysql", "float", mysql8Defaults)).toBe("");
+    expect(getDefaultLengthForType("mysql", "double", mysql8Defaults)).toBe("");
+    expect(combineDataTypeForDatabase("mysql", "int", getDefaultLengthForType("mysql", "int", mysql8Defaults))).toBe("int");
+    expect(combineDataTypeForDatabase("mysql", "float", getDefaultLengthForType("mysql", "float", mysql8Defaults))).toBe("float");
+    expect(getDefaultLengthForType("mysql", "decimal", mysql8Defaults)).toBe("10,0");
+
+    // A compatibility profile cannot be version-identified, so its existing behavior is retained.
+    expect(getDefaultLengthForType("mysql", "int")).toBe("11");
+    expect(getDefaultLengthForType("mysql", "float")).toBe("10,2");
+  });
+
+  it("uses TEXT for a new native SQLite column without changing compatible defaults", () => {
+    expect(DATA_TYPE_OPTIONS.sqlite).toContain("text");
+    expect(defaultNewColumnDataType("sqlite")).toBe("text");
+    expect(defaultNewColumnDataType("rqlite")).toBe("varchar(255)");
+    expect(defaultNewColumnDataType("turso")).toBe("varchar(255)");
+    expect(defaultNewColumnDataType("mysql")).toBe("varchar(255)");
+  });
+
+  it("requires a SQLite rebuild only for a retained existing column type change", () => {
+    const [column] = createColumnDrafts(
+      [
+        {
+          name: "status",
+          data_type: "integer",
+          is_nullable: false,
+          column_default: null,
+          is_primary_key: false,
+          extra: null,
+        },
+      ],
+      "sqlite",
+    );
+
+    expect(hasExistingColumnTypeChange([column])).toBe(false);
+    column.name = "state";
+    expect(hasExistingColumnTypeChange([column])).toBe(false);
+    column.dataType = "text";
+    expect(hasExistingColumnTypeChange([column])).toBe(true);
+    column.markedForDrop = true;
+    expect(hasExistingColumnTypeChange([column])).toBe(false);
+  });
+
   it("strips SQL Server metadata parentheses from editable defaults", () => {
     const drafts = createColumnDrafts(
       [
@@ -146,6 +209,16 @@ describe("tableStructureEditorState", () => {
     expect(isSqlServerIdentityCompatibleDataType("decimal(10)")).toBe(true);
     expect(isSqlServerIdentityCompatibleDataType("varchar(255)")).toBe(false);
     expect(isSqlServerIdentityCompatibleDataType("numeric(18, 2)")).toBe(false);
+  });
+
+  it("limits Dameng identity columns to supported data types", () => {
+    expect(isDamengIdentityCompatibleDataType("int")).toBe(true);
+    expect(isDamengIdentityCompatibleDataType("integer")).toBe(true);
+    expect(isDamengIdentityCompatibleDataType("bigint")).toBe(true);
+    expect(isDamengIdentityCompatibleDataType("number(18, 0)")).toBe(true);
+    expect(isDamengIdentityCompatibleDataType("decimal(10)")).toBe(true);
+    expect(isDamengIdentityCompatibleDataType("varchar(255)")).toBe(false);
+    expect(isDamengIdentityCompatibleDataType("number(18, 2)")).toBe(false);
   });
 
   it("identifies MySQL character data types that accept charset/collation", () => {

@@ -355,6 +355,59 @@ test("mongodb describe table returns inferred document fields", async () => {
   assert.match(result.content[0].text, /name/);
 });
 
+test("dameng metadata tools default to the login user schema", async () => {
+  const damengConnection: ConnectionConfig = {
+    ...connection,
+    db_type: "dameng",
+    username: "SYSDBA",
+    database: "DAMENG",
+  };
+  const usedScopes: Array<{ database?: string; schema?: string }> = [];
+  const scopedBackend: Backend = {
+    ...backend,
+    loadConnections: async () => [damengConnection],
+    listTables: async (config, schema) => {
+      usedScopes.push({ database: config.database, schema });
+      return [{ name: "ORDERS", type: "TABLE" }];
+    },
+    describeTable: async (config, _table, schema) => {
+      usedScopes.push({ database: config.database, schema });
+      return [{ name: "ID", data_type: "BIGINT", is_nullable: false, column_default: null, is_primary_key: true, comment: null }];
+    },
+  };
+  const server = createDbxMcpServer(scopedBackend, { isWebMode: true });
+
+  await (server as any)._registeredTools.dbx_list_tables.handler({ connection_name: "local" });
+  await (server as any)._registeredTools.dbx_describe_table.handler({ connection_name: "local", table: "ORDERS" });
+
+  assert.deepEqual(usedScopes, [
+    { database: "DAMENG", schema: "SYSDBA" },
+    { database: "DAMENG", schema: "SYSDBA" },
+  ]);
+});
+
+test("dameng metadata tools treat database as a schema alias while preferring explicit schema", async () => {
+  const damengConnection: ConnectionConfig = { ...connection, db_type: "dameng", username: "SYSDBA", database: "DAMENG" };
+  let usedSchema = "";
+  const scopedBackend: Backend = {
+    ...backend,
+    loadConnections: async () => [damengConnection],
+    listTables: async (_config, schema) => {
+      usedSchema = schema || "";
+      return [{ name: "ORDERS", type: "TABLE" }];
+    },
+  };
+  const server = createDbxMcpServer(scopedBackend, { isWebMode: true });
+
+  await (server as any)._registeredTools.dbx_list_tables.handler({ connection_name: "local", database: "XC" });
+
+  assert.equal(usedSchema, "XC");
+
+  await (server as any)._registeredTools.dbx_list_tables.handler({ connection_name: "local", database: "XC", schema: "REPORTING" });
+
+  assert.equal(usedSchema, "REPORTING");
+});
+
 test("mongodb execute query formats shell-style find results", async () => {
   const mongoConnection: ConnectionConfig = { ...connection, db_type: "mongodb" };
   const scopedBackend: Backend = {

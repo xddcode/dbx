@@ -15,6 +15,9 @@ import {
   mdTable,
   notifyReload,
   parseMongoAggregateCommand,
+  assessProductionSql,
+  isLikelyMongoMutation,
+  isProductionDatabase,
   postBridge,
   sqlSafetyFromEnv,
   splitSqlStatements,
@@ -38,6 +41,18 @@ function toolError(code: string, message: string) {
 
 function withDatabase(config: ConnectionConfig, database?: string): ConnectionConfig {
   return database === undefined ? config : { ...config, database };
+}
+
+function metadataScope(config: ConnectionConfig, database?: string, schema?: string): { config: ConnectionConfig; schema?: string } {
+  if (config.db_type !== "dameng") {
+    return { config: withDatabase(config, database), schema };
+  }
+
+  // Dameng exposes tables under user-owned schemas rather than separate
+  // databases. Accept the legacy database argument as a schema, and default to
+  // the login user when neither argument is provided.
+  const resolvedSchema = schema?.trim() || database?.trim() || config.username?.trim() || undefined;
+  return { config, schema: resolvedSchema };
 }
 
 function connectionIdentity(config: ConnectionConfig): string {
@@ -76,7 +91,7 @@ function formatRedisCommandToolResult(result: RedisCommandResult) {
 }
 
 export const DBX_CONNECTION_TYPE_DESCRIPTION =
-  "Database type: postgres, mysql, sqlite, rqlite, redis, duckdb, clickhouse, sqlserver, mongodb, oracle, elasticsearch, etcd, doris, starrocks, manticoresearch, milvus, qdrant, weaviate, chromadb, redshift, dameng, kingbase, highgo, vastbase, goldendb, databend, gaussdb, kwdb, yashandb, databricks, saphana, teradata, vertica, firebird, exasol, opengauss, oceanbase-oracle, questdb, gbase, h2, snowflake, trino, prestosql, hive, spark, db2, informix, influxdb, iris, neo4j, cassandra, bigquery, kylin, sundb, oscar, tdengine, iotdb, xugu, zookeeper, jdbc, access, mq";
+  "Database type: postgres, mysql, sqlite, rqlite, cloudflare-d1, redis, duckdb, clickhouse, sqlserver, mongodb, oracle, elasticsearch, etcd, doris, starrocks, manticoresearch, milvus, qdrant, weaviate, chromadb, redshift, dameng, kingbase, highgo, vastbase, goldendb, databend, gaussdb, kwdb, yashandb, databricks, saphana, teradata, vertica, firebird, exasol, opengauss, oceanbase-oracle, questdb, gbase, h2, snowflake, trino, prestosql, hive, spark, db2, informix, influxdb, iris, neo4j, cassandra, bigquery, kylin, sundb, oscar, tdengine, iotdb, xugu, zookeeper, jdbc, access, mq";
 const FILE_CAPABLE_CONNECTION_TYPES = new Set(["sqlite", "duckdb", "access", "h2"]);
 
 interface McpScope {
@@ -112,12 +127,7 @@ async function loadScopedConnections(backend: Backend, scope: McpScope): Promise
   return connections.filter((config) => connectionMatchesScope(config, scope));
 }
 
-async function resolveConnection(
-  backend: Backend,
-  scope: McpScope,
-  requestedId?: string,
-  requestedName?: string,
-): Promise<{ config?: ConnectionConfig; error?: ReturnType<typeof toolError> }> {
+async function resolveConnection(backend: Backend, scope: McpScope, requestedId?: string, requestedName?: string): Promise<{ config?: ConnectionConfig; error?: ReturnType<typeof toolError> }> {
   // connection_id takes priority over connection_name when both are provided.
   if (requestedId?.trim()) {
     const connections = await backend.loadConnections();
@@ -138,10 +148,7 @@ async function resolveConnection(
     if (matching.length > 1) {
       const lines = matching.map((c) => `- ${c.id}: ${c.db_type} @ ${c.host}:${c.port}`);
       return {
-        error: toolError(
-          "AMBIGUOUS_CONNECTION",
-          `Multiple connections found with name "${requestedName}". Please specify connection_id:\n${lines.join("\n")}`,
-        ),
+        error: toolError("AMBIGUOUS_CONNECTION", `Multiple connections found with name "${requestedName}". Please specify connection_id:\n${lines.join("\n")}`),
       };
     }
     return { config: matching[0] };
@@ -177,14 +184,15 @@ export function createDbxMcpServer(backend: Backend, options: { isWebMode?: bool
     {
       connection_id: z.string().optional().describe("Unique ID of the DBX connection (use this to disambiguate when multiple connections share the same name)"),
       connection_name: z.string().optional().describe("Name of the DBX connection"),
-      database: z.string().optional().describe("Database name"),
-      schema: z.string().optional().describe("Schema name (default: public for PostgreSQL)"),
+      database: z.string().optional().describe("Database name; for Dameng this is also accepted as a schema alias"),
+      schema: z.string().optional().describe("Schema name (default: public for PostgreSQL, login user for Dameng)"),
     },
     async ({ connection_id, connection_name, database, schema }) => {
       const { config, error } = await resolveConnection(backend, scope, connection_id, connection_name);
       if (error) return error;
       const resolvedConfig = config!;
-      const tables = await backend.listTables(withDatabase(resolvedConfig, database ?? scope.database), schema);
+      const scopeValue = metadataScope(resolvedConfig, database ?? scope.database, schema);
+      const tables = await backend.listTables(scopeValue.config, scopeValue.schema);
       if (tables.length === 0) return text("No tables found.");
       const rows = tables.map((t) => [t.name, t.type]);
       return labeledText(resolvedConfig, mdTable(["Table", "Type"], rows));
@@ -198,14 +206,15 @@ export function createDbxMcpServer(backend: Backend, options: { isWebMode?: bool
       connection_id: z.string().optional().describe("Unique ID of the DBX connection (use this to disambiguate when multiple connections share the same name)"),
       connection_name: z.string().optional().describe("Name of the DBX connection"),
       table: z.string().describe("Table name"),
-      database: z.string().optional().describe("Database name"),
-      schema: z.string().optional().describe("Schema name (default: public for PostgreSQL)"),
+      database: z.string().optional().describe("Database name; for Dameng this is also accepted as a schema alias"),
+      schema: z.string().optional().describe("Schema name (default: public for PostgreSQL, login user for Dameng)"),
     },
     async ({ connection_id, connection_name, table, database, schema }) => {
       const { config, error } = await resolveConnection(backend, scope, connection_id, connection_name);
       if (error) return error;
       const resolvedConfig = config!;
-      const columns = await backend.describeTable(withDatabase(resolvedConfig, database ?? scope.database), table, schema);
+      const scopeValue = metadataScope(resolvedConfig, database ?? scope.database, schema);
+      const columns = await backend.describeTable(scopeValue.config, table, scopeValue.schema);
       if (columns.length === 0) return text("No columns found.");
       const rows = columns.map((c) => [c.is_primary_key ? `${c.name} (PK)` : c.name, c.data_type, c.is_nullable ? "YES" : "NO", c.column_default ?? "", c.comment ?? ""]);
       return labeledText(resolvedConfig, mdTable(["Column", "Type", "Nullable", "Default", "Comment"], rows));
@@ -231,6 +240,12 @@ export function createDbxMcpServer(backend: Backend, options: { isWebMode?: bool
       if (scopedConfig.db_type !== "mongodb") {
         const safety = evaluateSqlSafety(sql, { ...sqlSafetyFromEnv(), allowMultipleStatements: true });
         if (!safety.allowed) return toolError("SQL_BLOCKED", safety.reason ?? "SQL blocked.");
+        const production = assessProductionSql(sql, scopedConfig, database ?? scope.database ?? scopedConfig.database);
+        if (production.active && production.isMutation) {
+          return toolError("PRODUCTION_WRITE_BLOCKED", "MCP cannot execute writes against a production database. Return the SQL for a user to review and run in DBX.");
+        }
+      } else if (isProductionDatabase(scopedConfig, database ?? scope.database ?? scopedConfig.database) && isLikelyMongoMutation(sql)) {
+        return toolError("PRODUCTION_WRITE_BLOCKED", "MCP cannot execute writes against a production database. Return the command for a user to review and run in DBX.");
       }
       // MongoDB shell commands don't fit the SQL safety evaluator; the backend
       // (node-core executeQuery) applies command-aware read/write gating.
@@ -270,6 +285,9 @@ export function createDbxMcpServer(backend: Backend, options: { isWebMode?: bool
       }
       const safety = evaluateRedisCommandSafety(command, sqlSafetyFromEnv());
       if (!safety.allowed) return toolError("REDIS_COMMAND_BLOCKED", safety.reason ?? "Redis command blocked.");
+      if (isProductionDatabase(scopedConfig, String(defaultRedisDb(scopedConfig, scope, db))) && safety.safety !== "allowed") {
+        return toolError("PRODUCTION_WRITE_BLOCKED", "MCP cannot execute write or dangerous Redis commands against a production database.");
+      }
       try {
         const result = await backend.executeRedisCommand(scopedConfig, defaultRedisDb(scopedConfig, scope, db), command, {
           skipSafetyCheck: safety.skipSafetyCheck,
@@ -314,11 +332,11 @@ export function createDbxMcpServer(backend: Backend, options: { isWebMode?: bool
       {
         name: z.string().describe("Connection name"),
         db_type: z.string().describe(DBX_CONNECTION_TYPE_DESCRIPTION),
-        host: z.string().describe("Database host"),
+        host: z.string().describe("Database host; for cloudflare-d1, use the Cloudflare Account ID"),
         port: z.number().optional().describe("Database port (TDengine defaults to 6041, IoTDB defaults to 6667, XuguDB defaults to 5138)"),
         username: z.string().default("").describe("Username"),
-        password: z.string().default("").describe("Password"),
-        database: z.string().optional().describe("Default database name"),
+        password: z.string().default("").describe("Password; for cloudflare-d1, use the API Token"),
+        database: z.string().optional().describe("Default database name; for cloudflare-d1, use the D1 Database ID"),
         ssl: z.boolean().default(false).describe("Enable SSL"),
         driver_profile: z.string().optional().describe("Driver profile (e.g. 'gbase8a', 'gbase8s')"),
       },
@@ -328,6 +346,7 @@ export function createDbxMcpServer(backend: Backend, options: { isWebMode?: bool
         const DEFAULT_PORTS: Record<string, number> = {
           kwdb: 26257,
           rqlite: 4001,
+          "cloudflare-d1": 443,
           tdengine: 6041,
           oscar: 2003,
           iotdb: 6667,
@@ -462,6 +481,16 @@ export function createDbxMcpServer(backend: Backend, options: { isWebMode?: bool
         } else {
           const safety = evaluateSqlSafety(sql, { ...safetyOptions, allowMultipleStatements: true });
           if (!safety.allowed) return toolError("SQL_BLOCKED", safety.reason ?? "SQL blocked.");
+        }
+        if (config?.db_type === "mongodb") {
+          if (isProductionDatabase(config, database ?? scope.database ?? config.database) && isLikelyMongoMutation(sql)) {
+            return toolError("PRODUCTION_WRITE_BLOCKED", "MCP cannot send writes against a production database to DBX.");
+          }
+        } else {
+          const production = assessProductionSql(sql, config, database ?? scope.database ?? config.database);
+          if (production.active && production.isMutation) {
+            return toolError("PRODUCTION_WRITE_BLOCKED", "MCP cannot send writes against a production database to DBX.");
+          }
         }
         // MongoDB shell commands bypass the SQL safety evaluator; pass MCP
         // safety flags to the desktop executor for command-aware gating.

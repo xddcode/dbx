@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "vitest";
 import {
   applyManticoreDdlColumnExtras,
@@ -13,6 +14,7 @@ import {
   getColumnEditorControls,
   getDataTypeOptions,
   isProtectedManticoreIdColumn,
+  isDamengIdentityCompatibleDataType,
   isMysqlEnumDataType,
   isSqlServerIdentityCompatibleDataType,
   mysqlEnumDataType,
@@ -21,7 +23,8 @@ import {
   rehydrateColumnDraftsFromMetadata,
   toColumnNames,
 } from "../../apps/desktop/src/lib/table/tableStructureEditorState.ts";
-import type { ColumnInfo, IndexInfo } from "../../apps/desktop/src/types/database.ts";
+import { firstStructureMetadataTab, isStructureMetadataTabSupported } from "../../apps/desktop/src/lib/table/tableMetadataCapabilities.ts";
+import type { ColumnInfo, IndexInfo, TableInfoTab } from "../../apps/desktop/src/types/database.ts";
 
 const columns: ColumnInfo[] = [
   {
@@ -272,6 +275,16 @@ test("parses SQL Server identity extra string to ColumnExtra", () => {
   });
 });
 
+test("parses Dameng identity extra string to ColumnExtra", () => {
+  assert.deepEqual(parseExtraToColumnExtra("identity", "dameng"), {
+    autoIncrement: true,
+  });
+  assert.deepEqual(parseExtraToColumnExtra("IDENTITY(100, 5)", "dameng"), {
+    autoIncrement: true,
+    identity: { seed: 100, increment: 5 },
+  });
+});
+
 test("recognizes SQL Server identity-compatible data types", () => {
   assert.equal(isSqlServerIdentityCompatibleDataType("tinyint"), true);
   assert.equal(isSqlServerIdentityCompatibleDataType("smallint"), true);
@@ -282,6 +295,16 @@ test("recognizes SQL Server identity-compatible data types", () => {
   assert.equal(isSqlServerIdentityCompatibleDataType("numeric(10)"), true);
   assert.equal(isSqlServerIdentityCompatibleDataType("varchar(255)"), false);
   assert.equal(isSqlServerIdentityCompatibleDataType("numeric(18,2)"), false);
+});
+
+test("recognizes Dameng identity-compatible data types", () => {
+  assert.equal(isDamengIdentityCompatibleDataType("int"), true);
+  assert.equal(isDamengIdentityCompatibleDataType("integer"), true);
+  assert.equal(isDamengIdentityCompatibleDataType("bigint"), true);
+  assert.equal(isDamengIdentityCompatibleDataType("number(18, 0)"), true);
+  assert.equal(isDamengIdentityCompatibleDataType("decimal(10)"), true);
+  assert.equal(isDamengIdentityCompatibleDataType("varchar(255)"), false);
+  assert.equal(isDamengIdentityCompatibleDataType("number(18, 2)"), false);
 });
 
 test("does not add MySQL-style display widths to SQL Server integer types", () => {
@@ -431,4 +454,49 @@ test("allows Manticore Search column properties only before the column exists", 
   assert.equal(canEditManticoreColumnProperties("manticoresearch", false), true);
   assert.equal(canEditManticoreColumnProperties("manticoresearch", true), false);
   assert.equal(canEditManticoreColumnProperties("mysql", false), false);
+});
+
+const fullCapabilities = { columns: true, indexes: true, foreignKeys: true, triggers: true, ddl: true };
+const noDdlCapabilities = { columns: true, indexes: true, foreignKeys: true, triggers: true, ddl: false };
+const ddlOnlyCapabilities = { columns: false, indexes: false, foreignKeys: false, triggers: false, ddl: true };
+
+test("defaults to columns tab for edit mode with full capabilities", () => {
+  assert.equal(firstStructureMetadataTab(fullCapabilities, false), "columns");
+});
+
+test("defaults to columns tab for create mode", () => {
+  assert.equal(firstStructureMetadataTab(fullCapabilities, true), "columns");
+});
+
+test("falls back to columns tab when DDL is not available in edit mode", () => {
+  assert.equal(firstStructureMetadataTab(noDdlCapabilities, false), "columns");
+});
+
+test("falls back to DDL when no editable metadata tab is available", () => {
+  assert.equal(firstStructureMetadataTab(ddlOnlyCapabilities, false), "ddl");
+});
+
+test("preserves a restored structure draft tab without an explicit initial tab", () => {
+  const source = readFileSync("apps/desktop/src/components/structure/TableStructureEditor.vue", "utf8");
+  const restoredDraftBlock = source.match(/if \(props\.draft\?\.initialized\) \{[\s\S]*?\n  \} else if/);
+
+  assert.ok(restoredDraftBlock);
+  assert.match(restoredDraftBlock[0], /restoreDraft\(props\.draft\);[\s\S]*applyInitialStructureTab\(false\);/);
+});
+
+test("supports DDL tab in edit mode", () => {
+  assert.equal(isStructureMetadataTabSupported("ddl", fullCapabilities, false), true);
+});
+
+test("does not support DDL tab in create mode", () => {
+  assert.equal(isStructureMetadataTabSupported("ddl", fullCapabilities, true), false);
+});
+
+test("does not support DDL tab when capability is disabled", () => {
+  assert.equal(isStructureMetadataTabSupported("ddl", noDdlCapabilities, false), false);
+});
+
+test("supports columns tab in both modes", () => {
+  assert.equal(isStructureMetadataTabSupported("columns", fullCapabilities, false), true);
+  assert.equal(isStructureMetadataTabSupported("columns", fullCapabilities, true), true);
 });
