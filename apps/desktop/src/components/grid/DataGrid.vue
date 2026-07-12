@@ -6467,11 +6467,9 @@ const {
   copyRowAsInsert,
   copyRowAsInsertWithoutPrimaryKeys,
   prefetchRowAsInsertStatement,
-
-
+  canCopyRowAsInsert,
   prefetchRowAsUpdateStatement,
   copyRowAsUpdate,
-  canCopyRowAsInsert,
   canCopyRowAsInsertWithoutPrimaryKeys,
   canCopyRowAsUpdate,
   copyAll,
@@ -8685,21 +8683,15 @@ function copySubmenu(): ContextMenuItem {
       items.push({
         label: labels.insertNoPkMerged,
         action: () => copyRowAsInsertWithoutPrimaryKeys("merged"),
-
-
       });
       items.push({
         label: labels.insertNoPkRowByRow,
         action: () => copyRowAsInsertWithoutPrimaryKeys("row-by-row"),
-
-
       });
     } else {
       items.push({
         label: labels.insertNoPk,
         action: () => copyRowAsInsertWithoutPrimaryKeys(),
-
-
       });
     }
   }

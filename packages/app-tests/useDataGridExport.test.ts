@@ -390,9 +390,7 @@ test("copy row as INSERT refreshes prepared SQL after row data changes", async (
     isDirtyCol: [false, false],
     status: "",
   };
-  apiMock.buildDataGridCopyInsertStatement
-    .mockResolvedValueOnce("INSERT INTO users (id, name) VALUES (1, 'before');")
-    .mockResolvedValueOnce("INSERT INTO users (id, name) VALUES (1, 'after');");
+  apiMock.buildDataGridCopyInsertStatement.mockResolvedValueOnce("INSERT INTO users (id, name) VALUES (1, 'before');").mockResolvedValueOnce("INSERT INTO users (id, name) VALUES (1, 'after');");
   const composable = useDataGridExport({
     columns: computed(() => ["id", "name"]),
     displayItems: computed(() => [row]),
@@ -426,14 +424,14 @@ test("copy row as INSERT refreshes prepared SQL after row data changes", async (
   await composable.copyRowAsInsert();
 
   assert.equal(apiMock.buildDataGridCopyInsertStatement.mock.calls.length, 2);
-  assert.deepEqual(apiMock.buildDataGridCopyInsertStatement.mock.calls.map((call) => call[0].rows), [
-    [[1, "before"]],
-    [[1, "after"]],
-  ]);
-  assert.deepEqual(clipboardMock.copyToClipboard.mock.calls.map((call) => call[0]), [
-    "INSERT INTO users (id, name) VALUES (1, 'before');",
-    "INSERT INTO users (id, name) VALUES (1, 'after');",
-  ]);
+  assert.deepEqual(
+    apiMock.buildDataGridCopyInsertStatement.mock.calls.map((call) => call[0].rows),
+    [[[1, "before"]], [[1, "after"]]],
+  );
+  assert.deepEqual(
+    clipboardMock.copyToClipboard.mock.calls.map((call) => call[0]),
+    ["INSERT INTO users (id, name) VALUES (1, 'before');", "INSERT INTO users (id, name) VALUES (1, 'after');"],
+  );
 });
 
 test("copy row as INSERT works without prior prefetch (first context-menu click)", async () => {
