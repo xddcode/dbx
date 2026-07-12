@@ -2,6 +2,7 @@ import { computed, ref } from "vue";
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { requiresDatabaseSelection, useSqlExecution } from "../useSqlExecution";
+import { useConnectionStore } from "@/stores/connectionStore";
 import { useHistoryStore } from "@/stores/historyStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -138,6 +139,88 @@ describe("useSqlExecution", () => {
     const executedSql = executeCurrentSql.mock.calls[0]?.[0] ?? "";
     expect(executedSql).toContain("set @date_start = '2026-07-04 00:00:00'");
     expect(executedSql).toContain("where fp.create_at < @date_start");
+  });
+
+  it("records a later MySQL batch error and skips metadata refresh", async () => {
+    const activeTab = ref<QueryTab | undefined>(queryTab("app"));
+    const activeConnection = ref<ConnectionConfig | undefined>(connection("mysql"));
+    const activeOutputView = ref<"result" | "summary" | "explain" | "chart">("result");
+    const queryStore = useQueryStore();
+    const historyStore = useHistoryStore();
+    const connectionStore = useConnectionStore();
+    vi.spyOn(queryStore, "executeCurrentSql").mockImplementation(async () => {
+      const tab = activeTab.value;
+      if (!tab) return;
+      const successfulResult = { columns: ["value"], rows: [[1]], affected_rows: 0, execution_time_ms: 1 };
+      tab.result = successfulResult;
+      tab.results = [successfulResult, { columns: ["Error"], execution_error: true, rows: [["Duplicate entry '1'"]], affected_rows: 0, execution_time_ms: 1 }];
+      tab.activeResultIndex = 0;
+    });
+    const addHistory = vi.spyOn(historyStore, "add").mockResolvedValue(undefined);
+    const refreshObjects = vi.spyOn(connectionStore, "refreshObjectListTreeNode").mockResolvedValue(undefined);
+
+    const execution = useSqlExecution({
+      activeTab: computed(() => activeTab.value),
+      activeConnection: computed(() => activeConnection.value),
+      executableSql: computed(() => "SELECT 1 AS value; CREATE TABLE duplicate_target (id INT)"),
+      activeOutputView,
+    });
+
+    await execution.tryExecute();
+
+    expect(addHistory).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: "Duplicate entry '1'", affected_rows: undefined }));
+    expect(refreshObjects).not.toHaveBeenCalled();
+  });
+
+  it("does not treat an unmarked MySQL Error alias as a batch failure", async () => {
+    const activeTab = ref<QueryTab | undefined>(queryTab("app"));
+    const activeConnection = ref<ConnectionConfig | undefined>(connection("mysql"));
+    const activeOutputView = ref<"result" | "summary" | "explain" | "chart">("result");
+    const queryStore = useQueryStore();
+    const historyStore = useHistoryStore();
+    vi.spyOn(queryStore, "executeCurrentSql").mockImplementation(async () => {
+      const tab = activeTab.value;
+      if (!tab) return;
+      const successfulResult = { columns: ["value"], rows: [[1]], affected_rows: 0, execution_time_ms: 1 };
+      tab.result = successfulResult;
+      tab.results = [successfulResult, { columns: ["Error"], rows: [[2]], affected_rows: 0, execution_time_ms: 1 }];
+      tab.activeResultIndex = 0;
+    });
+    const addHistory = vi.spyOn(historyStore, "add").mockResolvedValue(undefined);
+
+    const execution = useSqlExecution({
+      activeTab: computed(() => activeTab.value),
+      activeConnection: computed(() => activeConnection.value),
+      executableSql: computed(() => "SELECT 1 AS value; SELECT 2 AS Error"),
+      activeOutputView,
+    });
+
+    await execution.tryExecute();
+
+    expect(addHistory).toHaveBeenCalledWith(expect.objectContaining({ success: true, error: undefined }));
+  });
+
+  it("continues to record active non-MySQL errors as failures", async () => {
+    const activeTab = ref<QueryTab | undefined>(queryTab("app"));
+    const activeConnection = ref<ConnectionConfig | undefined>(connection("postgres"));
+    const activeOutputView = ref<"result" | "summary" | "explain" | "chart">("result");
+    const queryStore = useQueryStore();
+    const historyStore = useHistoryStore();
+    vi.spyOn(queryStore, "executeCurrentSql").mockImplementation(async () => {
+      if (activeTab.value) activeTab.value.result = { columns: ["Error"], rows: [["relation does not exist"]], affected_rows: 0, execution_time_ms: 1 };
+    });
+    const addHistory = vi.spyOn(historyStore, "add").mockResolvedValue(undefined);
+
+    const execution = useSqlExecution({
+      activeTab: computed(() => activeTab.value),
+      activeConnection: computed(() => activeConnection.value),
+      executableSql: computed(() => "SELECT * FROM missing_table"),
+      activeOutputView,
+    });
+
+    await execution.tryExecute();
+
+    expect(addHistory).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: "relation does not exist" }));
   });
 
   it("requires production confirmation even when ordinary danger prompts are disabled", async () => {

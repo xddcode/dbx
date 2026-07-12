@@ -70,7 +70,7 @@ pub async fn execute_multi(
     client_session_id: Option<String>,
     timeout_secs: Option<u64>,
     use_transaction: Option<bool>,
-) -> Result<Vec<db::QueryResult>, String> {
+) -> Result<Vec<dbx_core::query::ExecuteMultiResult>, String> {
     let execution_id = execution_id.filter(|id| !id.trim().is_empty());
     let registered_query = execution_id.as_ref().map(|id| {
         state.running_queries.register_task(
@@ -90,7 +90,7 @@ pub async fn execute_multi(
         sql
     );
 
-    let result = dbx_core::query::execute_multi_core_with_options(
+    let result = dbx_core::query::execute_multi_core_with_options_for_client(
         &state,
         &connection_id,
         &database,
@@ -115,8 +115,8 @@ pub async fn execute_multi(
             trace_id,
             started_at.elapsed().as_millis(),
             results.len(),
-            results.iter().map(|result| result.rows.len()).collect::<Vec<_>>(),
-            results.iter().map(|result| result.execution_time_ms).collect::<Vec<_>>()
+            results.iter().map(|result| result.result.rows.len()).collect::<Vec<_>>(),
+            results.iter().map(|result| result.result.execution_time_ms).collect::<Vec<_>>()
         ),
         Err(error) => log::error!(
             "[query][execute_multi:error] trace_id={} elapsed_ms={} error={}",

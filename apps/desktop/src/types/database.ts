@@ -449,6 +449,8 @@ export interface OwnerInfo {
 
 export interface QueryResult {
   columns: string[];
+  /** Set for synthesized query execution failures. */
+  execution_error?: true;
   /** Internal row identifiers appended to editable query results. */
   hidden_column_indexes?: number[];
   /**

@@ -347,7 +347,7 @@ pub async fn execute_query(
 pub async fn execute_multi(
     State(state): State<Arc<WebState>>,
     Json(req): Json<ExecuteQueryRequest>,
-) -> Result<Json<Vec<dbx_core::db::QueryResult>>, AppError> {
+) -> Result<Json<Vec<dbx_core::query::ExecuteMultiResult>>, AppError> {
     let execution_id = req.execution_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let registered = state.app.running_queries.register_task(
@@ -356,7 +356,7 @@ pub async fn execute_multi(
     );
     let cancel_token = registered.token();
 
-    let result = dbx_core::query::execute_multi_core_with_options(
+    let result = dbx_core::query::execute_multi_core_with_options_for_client(
         &state.app,
         &req.connection_id,
         &req.database,

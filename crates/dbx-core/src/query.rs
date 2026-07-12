@@ -4,6 +4,7 @@ use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, NaiveDateTime, Nai
 use duckdb::types::{TimeUnit, Value, ValueRef};
 use futures::StreamExt;
 use mysql_async::prelude::Queryable;
+use serde::Serialize;
 use sqlparser::ast::{visit_relations_mut, Ident, ObjectName, ObjectNamePart, ObjectType, Statement};
 use sqlparser::dialect::{GenericDialect, PostgreSqlDialect};
 use sqlparser::parser::Parser;
@@ -41,6 +42,38 @@ pub enum PoolErrorAction {
     Keep,
     Discard,
     ReconnectAndRetry,
+}
+
+/// A multi-statement result with metadata intended for query clients.
+///
+/// `execution_error` is emitted only for synthesized MySQL-protocol errors so
+/// clients can distinguish them from a successful result column named `Error`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExecuteMultiResult {
+    #[serde(flatten)]
+    pub result: db::QueryResult,
+    #[serde(skip_serializing_if = "is_false")]
+    pub execution_error: bool,
+}
+
+impl ExecuteMultiResult {
+    fn execution_error(result: db::QueryResult) -> Self {
+        Self { result, execution_error: true }
+    }
+
+    fn into_query_result(self) -> db::QueryResult {
+        self.result
+    }
+}
+
+impl From<db::QueryResult> for ExecuteMultiResult {
+    fn from(result: db::QueryResult) -> Self {
+        Self { result, execution_error: false }
+    }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Unified database operation execution budget.
@@ -1744,6 +1777,21 @@ pub async fn execute_multi_core_with_options(
     cancel_token: Option<CancellationToken>,
     options: QueryExecutionOptions,
 ) -> Result<Vec<db::QueryResult>, String> {
+    execute_multi_core_with_options_for_client(state, connection_id, database, sql, schema, cancel_token, options)
+        .await
+        .map(|results| results.into_iter().map(ExecuteMultiResult::into_query_result).collect())
+}
+
+/// Execute a SQL batch and retain client-facing metadata for synthesized errors.
+pub async fn execute_multi_core_with_options_for_client(
+    state: &AppState,
+    connection_id: &str,
+    database: &str,
+    sql: &str,
+    schema: Option<&str>,
+    cancel_token: Option<CancellationToken>,
+    options: QueryExecutionOptions,
+) -> Result<Vec<ExecuteMultiResult>, String> {
     // Reject MongoDB queries that fall through to the generic executor.
     if connection_is_mongodb(state, connection_id).await {
         return Err("Use MongoDB-specific commands".to_string());
@@ -1768,7 +1816,9 @@ pub async fn execute_multi_core_with_options(
     };
 
     if is_sqlserver {
-        return execute_multi_sqlserver(state, &pool_key, sql, cancel_token, options).await;
+        return execute_multi_sqlserver(state, &pool_key, sql, cancel_token, options)
+            .await
+            .map(|results| results.into_iter().map(Into::into).collect());
     }
 
     let is_turso = {
@@ -1781,7 +1831,7 @@ pub async fn execute_multi_core_with_options(
         let result =
             execute_sql_statement_with_options(state, connection_id, database, sql, schema, cancel_token, options)
                 .await?;
-        return Ok(vec![result]);
+        return Ok(vec![result.into()]);
     }
 
     let db_type = connection_database_type(state, connection_id).await;
@@ -1790,14 +1840,14 @@ pub async fn execute_multi_core_with_options(
         |db_type| crate::sql::split_sql_statements_for_database(sql, db_type),
     );
     if statements.is_empty() {
-        return Ok(vec![empty_query_result(0)]);
+        return Ok(vec![empty_query_result(0).into()]);
     }
 
     // When use_transaction is explicitly true and we have multiple statements,
     // route through the transaction wrapper instead of the sequential auto-commit loop.
     if options.use_transaction == Some(true) && statements.len() > 1 {
         let result = execute_statements_in_transaction(state, connection_id, database, &statements, schema).await?;
-        return Ok(vec![result]);
+        return Ok(vec![result.into()]);
     }
 
     let mysql_pool = {
@@ -1820,7 +1870,7 @@ pub async fn execute_multi_core_with_options(
             options,
         )
         .await?;
-        return Ok(vec![result]);
+        return Ok(vec![result.into()]);
     }
 
     if let Some((pool, mode)) = mysql_pool {
@@ -1865,7 +1915,67 @@ pub async fn execute_multi_core_with_options(
         }
     }
 
-    Ok(results)
+    Ok(results.into_iter().map(Into::into).collect())
+}
+
+trait MysqlBatchStatementExecutor {
+    async fn execute_statement(&mut self, statement: &str) -> Result<db::QueryResult, String>;
+}
+
+struct MysqlBatchConnection<'a> {
+    conn: &'a mut mysql_async::Conn,
+    cancel_token: Option<CancellationToken>,
+    query_timeout: Option<Duration>,
+    bare: bool,
+    max_rows: Option<usize>,
+    dialect: db::mysql::MySqlQueryDialect,
+}
+
+impl MysqlBatchStatementExecutor for MysqlBatchConnection<'_> {
+    async fn execute_statement(&mut self, statement: &str) -> Result<db::QueryResult, String> {
+        wait_for_query_opt(
+            self.cancel_token.clone(),
+            self.query_timeout,
+            db::mysql::execute_query_on_conn_with_max_rows(
+                &mut *self.conn,
+                statement,
+                self.bare,
+                self.max_rows,
+                self.dialect,
+            ),
+        )
+        .await
+    }
+}
+
+async fn execute_mysql_batch_statements<E>(
+    executor: &mut E,
+    statements: &[String],
+    db_type: Option<DatabaseType>,
+    cancel_token: Option<CancellationToken>,
+) -> (Vec<ExecuteMultiResult>, Option<PoolErrorAction>)
+where
+    E: MysqlBatchStatementExecutor,
+{
+    let mut results = Vec::with_capacity(statements.len());
+    for statement in statements {
+        if is_canceled(&cancel_token) {
+            results.push(ExecuteMultiResult::execution_error(error_query_result(canceled_error())));
+            return (results, None);
+        }
+
+        match executor.execute_statement(statement).await {
+            Ok(result) => results.push(result.into()),
+            Err(err) => {
+                let action = pool_error_action(db_type, &err);
+                results.push(ExecuteMultiResult::execution_error(error_query_result(err)));
+                // Do not run dependent statements after any MySQL-protocol statement fails.
+                return (results, Some(action));
+            }
+        }
+    }
+
+    (results, None)
 }
 
 async fn execute_multi_mysql(
@@ -1878,7 +1988,7 @@ async fn execute_multi_mysql(
     statements: &[String],
     cancel_token: Option<CancellationToken>,
     options: QueryExecutionOptions,
-) -> Result<Vec<db::QueryResult>, String> {
+) -> Result<Vec<ExecuteMultiResult>, String> {
     let query_timeout = resolve_query_timeout(options.timeout_secs);
     let operation_budget = operation_budget_for_pool_key(state, pool_key, query_timeout).await;
     let bare = mode == crate::connection::MysqlMode::Bare;
@@ -1898,36 +2008,25 @@ async fn execute_multi_mysql(
             {
                 state.remove_pool_by_key(pool_key).await;
             }
-            return Ok(vec![error_query_result(err)]);
+            return Ok(vec![ExecuteMultiResult::execution_error(error_query_result(err))]);
         }
     };
-    let mut results = Vec::with_capacity(statements.len());
-
     apply_oceanbase_mysql_session_timeout(state, pool_key, &mut conn, options.timeout_secs).await?;
 
-    for stmt in statements {
-        if is_canceled(&cancel_token) {
-            results.push(error_query_result(canceled_error()));
-            break;
-        }
+    let mut executor = MysqlBatchConnection {
+        conn: &mut conn,
+        cancel_token: cancel_token.clone(),
+        query_timeout,
+        bare,
+        max_rows,
+        dialect,
+    };
+    let (results, error_action) =
+        execute_mysql_batch_statements(&mut executor, statements, db_type, cancel_token).await;
+    drop(executor);
 
-        match wait_for_query_opt(
-            cancel_token.clone(),
-            query_timeout,
-            db::mysql::execute_query_on_conn_with_max_rows(&mut conn, stmt, bare, max_rows, dialect),
-        )
-        .await
-        {
-            Ok(result) => results.push(result),
-            Err(err) => {
-                let action = pool_error_action(db_type, &err);
-                results.push(error_query_result(err));
-                if matches!(action, PoolErrorAction::Discard | PoolErrorAction::ReconnectAndRetry) {
-                    state.remove_pool_by_key(pool_key).await;
-                    break;
-                }
-            }
-        }
+    if matches!(error_action, Some(PoolErrorAction::Discard | PoolErrorAction::ReconnectAndRetry)) {
+        state.remove_pool_by_key(pool_key).await;
     }
 
     Ok(results)
@@ -3065,6 +3164,18 @@ mod tests {
         }
     }
 
+    struct FakeMysqlBatchExecutor {
+        outcomes: std::collections::VecDeque<Result<db::QueryResult, String>>,
+        executed: Vec<String>,
+    }
+
+    impl MysqlBatchStatementExecutor for FakeMysqlBatchExecutor {
+        async fn execute_statement(&mut self, statement: &str) -> Result<db::QueryResult, String> {
+            self.executed.push(statement.to_string());
+            self.outcomes.pop_front().expect("test outcome for statement")
+        }
+    }
+
     #[test]
     fn agent_execute_batch_unsupported_detects_case_insensitive_method_errors() {
         assert!(is_agent_execute_batch_unsupported("Agent RPC error (-1): unknown method: execute_batch"));
@@ -3092,6 +3203,39 @@ mod tests {
             ),
             PoolErrorAction::Discard
         );
+    }
+
+    #[tokio::test]
+    async fn mysql_batch_stops_after_the_first_statement_error() {
+        let statements = vec!["first".to_string(), "fails".to_string(), "must-not-run".to_string()];
+        let mut executor = FakeMysqlBatchExecutor {
+            outcomes: std::collections::VecDeque::from([
+                Ok(empty_query_result(0)),
+                Err("Duplicate entry".to_string()),
+                Ok(empty_query_result(0)),
+            ]),
+            executed: Vec::new(),
+        };
+
+        let (results, error_action) =
+            execute_mysql_batch_statements(&mut executor, &statements, Some(DatabaseType::Mysql), None).await;
+
+        assert_eq!(executor.executed, vec!["first", "fails"]);
+        assert_eq!(results.len(), 2);
+        assert!(results[1].execution_error);
+        assert_eq!(error_action, Some(PoolErrorAction::Keep));
+    }
+
+    #[test]
+    fn execute_multi_result_serializes_error_marker_only_for_synthesized_errors() {
+        let success = serde_json::to_value(ExecuteMultiResult::from(empty_query_result(0))).unwrap();
+        assert!(success.get("execution_error").is_none());
+
+        let failure =
+            serde_json::to_value(ExecuteMultiResult::execution_error(error_query_result("failed".to_string())))
+                .unwrap();
+        assert_eq!(failure.get("execution_error"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(failure.get("columns"), Some(&serde_json::json!(["Error"])));
     }
 
     #[test]

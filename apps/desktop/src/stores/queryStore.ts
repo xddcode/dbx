@@ -45,6 +45,7 @@ import { externalSqlFileDisplayTitles, normalizeExternalSqlPath } from "@/lib/sq
 import { clearDataGridPendingSnapshotsForTab } from "@/composables/useDataGridEditor";
 import { buildTabResultSnapshot, deleteTabResultSnapshot, readTabResultSnapshot, tabResultCacheKey, writeTabResultSnapshot } from "@/lib/tabs/tabResultCache";
 import { queryResultBaseSql, queryResultExecutionSql } from "@/lib/tabs/tabPresentation";
+import { isMysqlExecutionErrorResult } from "@/lib/query/queryResultError";
 import { decodeQueryResultArchive, encodeQueryResultArchive, type DecodedQueryResultArchive } from "@/lib/query/queryResultArchive";
 import * as api from "@/lib/backend/api";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -1982,6 +1983,7 @@ export const useQueryStore = defineStore("query", () => {
     const message = e instanceof Error ? e.message : String(e);
     return markQueryResultRowsRaw({
       columns: ["Error"],
+      execution_error: true,
       rows: [[message]],
       affected_rows: 0,
       execution_time_ms: 0,
@@ -2920,8 +2922,9 @@ export const useQueryStore = defineStore("query", () => {
           current.results[activeGroupIndex] = results[0];
           current.result = results[0];
         } else if (results.length > 1) {
+          const errorResultIndex = results.findIndex((result) => isMysqlExecutionErrorResult(result, conn?.db_type));
           const activeResultIndex = results.findIndex((result) => result.columns.length > 0);
-          const resultIndex = preservedResultIndex(results, current.activeResultIndex, options?.preserveActiveResultIndex) ?? (activeResultIndex >= 0 ? activeResultIndex : 0);
+          const resultIndex = errorResultIndex >= 0 ? errorResultIndex : (preservedResultIndex(results, current.activeResultIndex, options?.preserveActiveResultIndex) ?? (activeResultIndex >= 0 ? activeResultIndex : 0));
           current.results = results;
           current.activeResultIndex = resultIndex;
           current.result = results[resultIndex];

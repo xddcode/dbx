@@ -9,6 +9,7 @@ import { isSingleDatabase, usesTreeSchemaMode } from "@/lib/database/databaseCap
 import { canExecuteWithoutSelectedDatabase } from "@/lib/connection/connectionLevelDatabaseBootstrap";
 import { classifySqlActivityKind } from "@/lib/history/historyActivityKind";
 import { sqlMetadataRefreshTarget } from "@/lib/sql/sqlMetadataRefresh";
+import { isMysqlExecutionErrorResult, usesMysqlProtocolDatabaseType } from "@/lib/query/queryResultError";
 import { classifyRedisCommandSafety, firstRedisCommandToken } from "@/lib/redis/redisCommandSafety";
 import { isSqlExecutionSnapshot, resolveExecutableSql, type SqlExecutionOverride, type SqlExecutionSnapshot } from "@/lib/sql/sqlExecutionTarget";
 import { extractSqlParameterDescriptors, type SqlParameterDescriptor, type SqlParameterSyntax } from "@/lib/sql/sqlParameters";
@@ -39,6 +40,16 @@ function primarySqlOperation(sql: string): string {
     .map((part) => part.trim())
     .find(Boolean);
   return statement?.match(/^([a-z]+)/i)?.[1]?.toUpperCase() || "SQL";
+}
+
+function firstQueryExecutionError(tab: Pick<QueryTab, "result" | "results">, databaseType: DatabaseType | undefined) {
+  const activeResult = tab.result;
+  if (activeResult && isMysqlExecutionErrorResult(activeResult, databaseType)) return activeResult;
+  if (!usesMysqlProtocolDatabaseType(databaseType) && activeResult?.columns.includes("Error")) return activeResult;
+  if (!usesMysqlProtocolDatabaseType(databaseType)) return undefined;
+
+  const results = tab.results?.length ? tab.results : tab.result ? [tab.result] : [];
+  return results.find((result) => isMysqlExecutionErrorResult(result, databaseType));
 }
 
 export function useSqlExecution(deps: {
@@ -146,20 +157,23 @@ export function useSqlExecution(deps: {
     sql ??= await resolvedExecutableSql();
     const tab = deps.activeTab.value;
     if (!tab || !sql.trim()) return;
-    if (requiresDatabaseSelection(tab, deps.activeConnection.value, sql)) {
+    const executionConnection = connectionStore.getConfig(tab.connectionId) ?? deps.activeConnection.value;
+    const executionDatabaseType = executionConnection?.db_type;
+    if (requiresDatabaseSelection(tab, executionConnection, sql)) {
       deps.onMissingDatabase?.();
       return;
     }
     deps.activeOutputView.value = "result";
-    const connName = connectionStore.getConfig(tab.connectionId)?.name || "";
+    const connName = executionConnection?.name || "";
     const start = Date.now();
-    const isRedis = deps.activeConnection.value?.db_type === "redis";
+    const isRedis = executionDatabaseType === "redis";
     await queryStore.executeCurrentSql(sql, isRedis ? { skipRedisSafetyCheck: deps.blockDangerousRedisCommands?.value === false } : undefined);
     if (tab.result && !tab.result.columns.length && !tab.results?.some((result) => result.columns.length > 0)) {
       deps.activeOutputView.value = "summary";
     }
     const elapsed = Date.now() - start;
-    const success = !tab.result?.columns.includes("Error");
+    const failure = firstQueryExecutionError(tab, executionDatabaseType);
+    const success = !failure;
     historyStore.add({
       connection_id: tab.connectionId,
       connection_name: connName,
@@ -167,7 +181,7 @@ export function useSqlExecution(deps: {
       sql,
       execution_time_ms: elapsed,
       success,
-      error: success ? undefined : String(tab.result?.rows?.[0]?.[0] ?? ""),
+      error: failure ? String(failure.rows?.[0]?.[0] ?? "") : undefined,
       activity_kind: classifySqlActivityKind(sql),
       operation: primarySqlOperation(sql),
       affected_rows: success ? tab.result?.affected_rows : undefined,
