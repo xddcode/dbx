@@ -466,6 +466,7 @@ export const deleteHistoryEntry = forward("deleteHistoryEntry");
 export const checkMcpServerStatus = forward("checkMcpServerStatus");
 export const installMcpServer = forward("installMcpServer");
 export const checkForUpdates = forward("checkForUpdates");
+export const fetchChangelog = forward("fetchChangelog");
 export const getSystemProxyUrl = forward("getSystemProxyUrl");
 export const downloadAndInstallUpdate = forward("downloadAndInstallUpdate");
 export const getAppVersion = forward("getAppVersion");

@@ -99,6 +99,7 @@ import { uuid } from "@/lib/common/utils";
 import { DEFAULT_SQL_SNIPPETS } from "@/lib/sql/sqlCompletion";
 import AiProviderLogo from "@/components/icons/AiProviderLogo.vue";
 import AppLogo from "@/components/icons/AppLogo.vue";
+import ChangelogPanel from "@/components/settings/ChangelogPanel.vue";
 import SqlFormatterSettingsPanel from "./SqlFormatterSettingsPanel.vue";
 import { APP_THEME_PALETTES, type AppThemeAppearance, type AppThemeMode, type AppThemePalette } from "@/lib/app/appTheme";
 import { editorSettingsDraftChanged, editorSettingsDraftFromSettings, editorSettingsPatchFromDraft, type EditorSettingsDraft } from "@/lib/settings/editorSettingsDraft";
@@ -4551,6 +4552,8 @@ onUnmounted(cleanupPreviewEditor);
                 <p v-else class="mt-4 text-sm text-muted-foreground">{{ t("settings.supportInfoLoading") }}</p>
                 <p v-if="appSupportInfoError" class="mt-3 text-xs text-destructive">{{ t("settings.supportInfoLoadFailed", { message: appSupportInfoError }) }}</p>
               </div>
+
+              <ChangelogPanel />
 
               <div class="rounded-lg border p-4">
                 <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

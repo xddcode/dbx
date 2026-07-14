@@ -1235,6 +1235,7 @@ pub fn run() {
             commands::mcp::check_mcp_server_status,
             commands::mcp::install_mcp_server,
             commands::update::check_for_updates,
+            commands::update::fetch_changelog,
             commands::update::get_system_proxy_url,
             commands::update::download_and_install_update,
             commands::transfer::start_transfer,
