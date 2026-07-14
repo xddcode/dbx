@@ -3001,6 +3001,7 @@ export const useQueryStore = defineStore("query", () => {
             : {}),
           ...(clientSessionId ? { clientSessionId } : {}),
           timeoutSecs: queryTimeoutSecs,
+          continueOnError: settingsStore.editorSettings.continueOnErrorOnBatch,
         };
         console.info("[DBX][executeTabSql:execute-multi:invoke]", {
           traceId,
