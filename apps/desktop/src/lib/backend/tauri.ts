@@ -1391,6 +1391,10 @@ export async function checkForUpdates(locale?: string): Promise<UpdateInfo> {
   return invoke("check_for_updates", { locale });
 }
 
+export async function fetchChangelog(lang?: string): Promise<import("@/lib/app/changelog").ChangelogData> {
+  return invoke("fetch_changelog", { lang });
+}
+
 export async function getSystemProxyUrl(): Promise<string | null> {
   return invoke("get_system_proxy_url");
 }
