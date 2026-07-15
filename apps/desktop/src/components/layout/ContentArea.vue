@@ -54,7 +54,7 @@ const NacosAdminConsole = defineAsyncComponent(() => import("@/components/nacos/
 const ObjectBrowser = defineAsyncComponent(() => import("@/components/objects/ObjectBrowser.vue"));
 const TableStructureEditor = defineAsyncComponent(() => import("@/components/structure/TableStructureEditor.vue"));
 const DatabaseUserAdmin = defineAsyncComponent(() => import("@/components/admin/DatabaseUserAdmin.vue"));
-const MySqlProcessList = defineAsyncComponent(() => import("@/components/admin/MySqlProcessList.vue"));
+const ProcessListPanel = defineAsyncComponent(() => import("@/components/admin/ProcessListPanel.vue"));
 const MySqlDashboard = defineAsyncComponent(() => import("@/components/admin/MySqlDashboard.vue"));
 const DamengJobAdmin = defineAsyncComponent(() => import("@/components/admin/DamengJobAdmin.vue"));
 const ExplainPlanViewer = defineAsyncComponent(() => import("@/components/explain/ExplainPlanViewer.vue"));
@@ -83,6 +83,7 @@ import { useTabScroll } from "@/composables/useTabScroll";
 import { formatElapsedSeconds } from "@/lib/common/elapsedTime";
 import type { CustomSaveHandler } from "@/composables/useDataGridEditor";
 import type { QueryTab, ConnectionConfig, TableInfoTab, TreeNode, VectorCollectionMeta, ObjectBrowserViewport } from "@/types/database";
+import type { SqlObjectNavigationTarget } from "@/lib/sql/sqlNavigation";
 import { sqlFormatDialectForDbType, type SqlFormatDialect } from "@/lib/sql/sqlFormatter";
 import { productionContextForDatabase } from "@/lib/database/productionSafety";
 
@@ -148,7 +149,7 @@ const emit = defineEmits<{
   paginate: [offset: number, limit: number, whereInput?: string, orderBy?: string];
   sort: [column: string, columnIndex: number, direction: "asc" | "desc" | null, whereInput?: string, mode?: DataGridSortMode];
   executeSql: [sql: string];
-  clickTable: [tableName: string];
+  clickTable: [target: SqlObjectNavigationTarget];
   viewTableData: [tableName: string];
   viewTableDdl: [tableName: string];
   editTableStructure: [tableName: string];
@@ -646,8 +647,8 @@ function closeColumnInfo() {
   columnInfoError.value = undefined;
 }
 
-function onHandleClickTable(tableName: string) {
-  emit("clickTable", tableName);
+function onHandleClickTable(target: SqlObjectNavigationTarget) {
+  emit("clickTable", target);
 }
 
 function onHandleViewTableData(tableName: string) {
@@ -1595,7 +1596,7 @@ defineExpose({ focusSearch, refreshData, handleModRTarget, requestQueryEditorExe
     </template>
 
     <template v-else-if="activeTab.mode === 'processlist' && activeConnection">
-      <MySqlProcessList :key="activeTab.id" :connection="activeConnection" />
+      <ProcessListPanel :key="activeTab.id" :connection="activeConnection" />
     </template>
 
     <template v-else-if="activeTab.mode === 'mysql-dashboard'">

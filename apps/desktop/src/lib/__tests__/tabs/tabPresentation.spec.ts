@@ -1,6 +1,28 @@
-import { describe, expect, it } from "vitest";
-import { middleEllipsis, queryResultBaseSql, queryResultExecutionSql, resultSourceRange, tabularResultItems } from "@/lib/tabs/tabPresentation";
-import type { QueryTab } from "@/types/database";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createPinia, setActivePinia } from "pinia";
+import { useConnectionStore } from "@/stores/connectionStore";
+import { connectionGroupDisplayName, middleEllipsis, queryResultBaseSql, queryResultExecutionSql, resultSourceRange, tabTooltipLines, tabularResultItems } from "@/lib/tabs/tabPresentation";
+import type { ConnectionConfig, QueryTab } from "@/types/database";
+
+const translations: Record<string, string> = {
+  "tabs.tooltipConnection": "Connection:",
+  "tabs.tooltipGroup": "Group:",
+  "tabs.tooltipDatabase": "Database:",
+  "connectionGroup.ungroupedLabel": "Ungrouped",
+  "editor.noDatabase": "No database",
+};
+
+const translate = (key: string) => translations[key] ?? key;
+
+beforeEach(() => {
+  const values = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: vi.fn((key: string) => values.get(key) ?? null),
+    setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+    removeItem: vi.fn((key: string) => values.delete(key)),
+  });
+  setActivePinia(createPinia());
+});
 
 function queryTab(overrides: Partial<QueryTab>): QueryTab {
   return {
@@ -107,6 +129,44 @@ describe("query result labels", () => {
 
     expect(item?.label).toBeUndefined();
     expect(item?.title).toBe("SELECT 1");
+  });
+});
+
+describe("tab group presentation", () => {
+  it("adds the full, live group path to tab tooltips", () => {
+    const store = useConnectionStore();
+    store.connections = [{ id: "conn-1", name: "PostgreSQL", db_type: "postgres", database: "app" } as ConnectionConfig];
+    store.sidebarLayout = {
+      groups: [
+        { id: "project", name: "Project", collapsed: false },
+        { id: "staging", name: "Staging", collapsed: false },
+      ],
+      order: [
+        {
+          type: "group",
+          id: "project",
+          children: [{ type: "group", id: "staging", children: [{ type: "connection", id: "conn-1" }] }],
+        },
+      ],
+    };
+
+    expect(connectionGroupDisplayName("conn-1", translate)).toBe("Project / Staging");
+    expect(tabTooltipLines(queryTab({ database: "app" }), translate)).toEqual([
+      { label: "Connection:", value: "PostgreSQL" },
+      { label: "Group:", value: "Project / Staging" },
+      { label: "Database:", value: "app" },
+    ]);
+  });
+
+  it("labels a top-level connection as ungrouped", () => {
+    const store = useConnectionStore();
+    store.connections = [{ id: "conn-1", name: "PostgreSQL", db_type: "postgres", database: "app" } as ConnectionConfig];
+    store.sidebarLayout = {
+      groups: [],
+      order: [{ type: "connection", id: "conn-1" }],
+    };
+
+    expect(connectionGroupDisplayName("conn-1", translate)).toBe("Ungrouped");
   });
 });
 

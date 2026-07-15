@@ -1,5 +1,6 @@
 ﻿import { useConnectionStore } from "@/stores/connectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { findConnectionGroupPath } from "@/lib/sidebar/sidebarLayout";
 import { splitMongoCommandRanges } from "@/lib/mongo/mongoShellCommand";
 import { executableStatementRanges, splitSqlStatementRanges, type SqlTextRange } from "@/lib/sql/sqlStatementRanges";
 import type { ConnectionConfig, DatabaseType, QueryResult, QueryTab } from "@/types/database";
@@ -10,6 +11,13 @@ export type OutputView = "result" | "summary" | "explain" | "chart";
 export function connectionDisplayName(connectionId: string): string {
   const connectionStore = useConnectionStore();
   return connectionStore.getConfig(connectionId)?.name || connectionId;
+}
+
+export function connectionGroupDisplayName(connectionId: string, t: Translate): string | undefined {
+  const connectionStore = useConnectionStore();
+  const path = findConnectionGroupPath(connectionStore.sidebarLayout, connectionId);
+  if (path === null) return undefined;
+  return path.join(" / ") || t("connectionGroup.ungroupedLabel");
 }
 
 export function connectionColor(connectionId: string): string {
@@ -111,11 +119,9 @@ export function tabDisplayTitle(tab: QueryTab, t: Translate): string {
 
 export function tabTooltipLines(tab: QueryTab, t: Translate): { label: string; value: string }[] {
   const connName = connectionDisplayName(tab.connectionId);
+  const groupName = connectionGroupDisplayName(tab.connectionId, t);
   const database = databaseDisplayNameForTab(tab.connectionId, tab.database, t);
-  const lines: { label: string; value: string }[] = [
-    { label: t("tabs.tooltipConnection"), value: connName },
-    { label: t("tabs.tooltipDatabase"), value: database },
-  ];
+  const lines: { label: string; value: string }[] = [{ label: t("tabs.tooltipConnection"), value: connName }, ...(groupName ? [{ label: t("tabs.tooltipGroup"), value: groupName }] : []), { label: t("tabs.tooltipDatabase"), value: database }];
   if (tab.mode === "query" && queryTitle(tab)) {
     lines.unshift({ label: t("tabs.tooltipTitle"), value: tab.title });
   }
