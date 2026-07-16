@@ -855,6 +855,7 @@ async function loadServerFilterValues(columnIndex: number, searchValue: string) 
     const columnInfo = tableMeta.columns.find((column) => column.name === columnName);
     const sql = await buildDataGridColumnDistinctValuesSql({
       databaseType: resolvedDatabaseType.value,
+      identifierQuote: connectionStore.connectionIdentifierQuote?.(props.connectionId),
       catalog: tableMeta.catalog,
       database: tableMeta.database,
       schema: tableMeta.schema,
@@ -963,7 +964,10 @@ function columnFormatter(columnIndex: number): ColumnFormatterConfig | undefined
   const column = props.result.columns[columnIndex];
   if (!column) return undefined;
   const key = formatterKeyForColumn(column);
-  return key ? resolveColumnFormatter(settingsStore.editorSettings.columnFormatters[key], settingsStore.editorSettings.customColumnFormatters) : undefined;
+  return resolveColumnFormatter(key ? settingsStore.editorSettings.columnFormatters[key] : undefined, settingsStore.editorSettings.customColumnFormatters, {
+    pattern: settingsStore.editorSettings.globalDateTimeDisplayFormat,
+    columnType: props.result.column_types?.[columnIndex] ?? tableColumnForGridColumn(columnIndex)?.data_type,
+  });
 }
 
 function savedColumnFormatter(columnIndex: number): ColumnFormatterConfig | undefined {
@@ -1176,6 +1180,7 @@ async function applyServerColumnFilter(draft: LocalColumnFilterDraft) {
   }
   const condition = await buildColumnValuesFilterCondition({
     databaseType: resolvedDatabaseType.value,
+    identifierQuote: connectionStore.connectionIdentifierQuote?.(props.connectionId),
     columnName,
     columnInfo: props.tableMeta?.columns.find((column) => column.name === columnName),
     values,
@@ -1206,6 +1211,7 @@ async function applyTypedLocalFilterValue() {
   const columnInfo = props.tableMeta?.columns.find((column) => column.name === columnName);
   const condition = await buildColumnValueFilterCondition({
     databaseType: resolvedDatabaseType.value,
+    identifierQuote: connectionStore.connectionIdentifierQuote?.(props.connectionId),
     columnName,
     columnInfo,
     rawValue: localFilterTypedValue.value,
@@ -1298,6 +1304,7 @@ async function buildStructuredWhereFromRules(rules: StructuredFilterRule[]): Pro
           condition:
             (await buildDataGridContextFilterCondition({
               databaseType: resolvedDatabaseType.value,
+              identifierQuote: connectionStore.connectionIdentifierQuote?.(props.connectionId),
               columnName: rule.columnName,
               columnInfo,
               mode: rule.mode,
@@ -3679,6 +3686,7 @@ async function prefetchDetailSqlCondition() {
   try {
     const condition = await buildDataGridContextFilterCondition({
       databaseType: resolvedDatabaseType.value,
+      identifierQuote: connectionStore.connectionIdentifierQuote?.(props.connectionId),
       columnName: detail.column,
       columnInfo: props.tableMeta?.columns.find((column) => column.name === detail.column),
       mode: "equals",
@@ -3974,6 +3982,7 @@ async function contextFilterCondition(mode: FilterMode): Promise<string | null> 
   return (
     (await buildDataGridContextFilterCondition({
       databaseType: resolvedDatabaseType.value,
+      identifierQuote: connectionStore.connectionIdentifierQuote?.(props.connectionId),
       columnName: contextColumn.value,
       columnInfo: props.tableMeta?.columns.find((column) => column.name === contextColumn.value),
       mode,
