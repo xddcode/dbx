@@ -697,6 +697,9 @@ pub async fn stream_first_result_set(
 }
 
 fn sqlserver_cell_to_json(cell: &ColumnData<'static>) -> serde_json::Value {
+    if let Ok(Some(v)) = <&tiberius::xml::XmlData as FromSql>::from_sql(cell) {
+        return serde_json::Value::String(v.as_ref().to_string());
+    }
     if let Ok(Some(v)) = <&str as FromSql>::from_sql(cell) {
         return serde_json::Value::String(v.to_string());
     }
@@ -1733,6 +1736,20 @@ pub async fn execute_batch_with_max_rows(
             );
         }
     }
+    execute_simple_batch_with_max_rows(client, sql, max_rows).await
+}
+
+/// Execute a SQL Server batch directly through TDS simple-query mode.
+///
+/// This intentionally bypasses result-set type probing and SQL rewriting. It is
+/// required while `SHOWPLAN_XML` is enabled because any probe issued on the same
+/// session is itself affected by SHOWPLAN state.
+pub async fn execute_simple_batch_with_max_rows(
+    client: &mut SqlServerClient,
+    sql: &str,
+    max_rows: Option<usize>,
+) -> Result<Vec<QueryResult>, String> {
+    let start = Instant::now();
     let stream = sqlserver_driver_result(client.simple_query(sql)).await?;
     let mut results = sqlserver_driver_result(collect_result_sets_limited(stream, start, max_rows)).await?;
     for result in &mut results {
@@ -1829,6 +1846,9 @@ fn contains_transaction_control(sql: &str) -> bool {
 
 fn requires_simple_query_batch(sql: &str) -> bool {
     let tokens = first_sql_tokens(sql, 4);
+    if tokens.len() >= 2 && tokens[0].eq_ignore_ascii_case("SET") && tokens[1].eq_ignore_ascii_case("SHOWPLAN_XML") {
+        return true;
+    }
     if tokens.len() >= 2 && tokens[0].eq_ignore_ascii_case("CREATE") && tokens[1].eq_ignore_ascii_case("SCHEMA") {
         return true;
     }
@@ -1904,7 +1924,7 @@ mod tests {
         CompletionAssistantMatchMode, CompletionAssistantObjectKind, CompletionAssistantRequest, QueryResult,
     };
     use chrono::NaiveDate;
-    use std::time::Instant;
+    use std::{borrow::Cow, time::Instant};
     use tiberius::{ColumnData, IntoSql};
 
     #[test]
@@ -1916,6 +1936,18 @@ mod tests {
         assert_eq!(
             super::sqlserver_endpoint(r" db.example.com\SQLEXPRESS "),
             super::SqlServerEndpoint { host: "db.example.com", instance_name: Some("SQLEXPRESS") }
+        );
+    }
+
+    #[test]
+    fn sqlserver_xml_cells_are_returned_as_strings() {
+        let cell = ColumnData::Xml(Some(Cow::Owned(tiberius::xml::XmlData::new(
+            "<ShowPlanXML><RelOp NodeId=\"0\" /></ShowPlanXML>",
+        ))));
+
+        assert_eq!(
+            sqlserver_cell_to_json(&cell),
+            serde_json::Value::String("<ShowPlanXML><RelOp NodeId=\"0\" /></ShowPlanXML>".to_string())
         );
     }
 
@@ -1982,6 +2014,8 @@ mod tests {
 
     #[test]
     fn sqlserver_module_definitions_require_simple_query_batch() {
+        assert!(requires_simple_query_batch("SET SHOWPLAN_XML ON;"));
+        assert!(requires_simple_query_batch("SET SHOWPLAN_XML OFF;"));
         assert!(requires_simple_query_batch("CREATE SCHEMA [analytics];"));
         assert!(requires_simple_query_batch("CREATE FUNCTION dbo.fn_demo() RETURNS INT AS BEGIN RETURN 1; END;"));
         assert!(requires_simple_query_batch("ALTER PROCEDURE dbo.usp_demo AS SELECT 1;"));
@@ -2053,6 +2087,17 @@ mod tests {
         let execute_batch = source.split("pub async fn execute_batch").nth(1).unwrap();
         let execute_batch = execute_batch.split("#[cfg(test)]").next().unwrap();
         assert!(!execute_batch.contains("into_results"));
+    }
+
+    #[test]
+    fn sqlserver_explicit_simple_batch_bypasses_result_type_probing() {
+        let source = include_str!("sqlserver.rs");
+        let simple_batch = source.split("pub async fn execute_simple_batch_with_max_rows").nth(1).unwrap();
+        let simple_batch = simple_batch.split("fn strip_dbx_sqlserver_row_number_column").next().unwrap();
+
+        assert!(simple_batch.contains("client.simple_query(sql)"));
+        assert!(!simple_batch.contains("sqlserver_unsafe_type_query"));
+        assert!(!simple_batch.contains("describe_sqlserver_result_set"));
     }
 
     #[test]
