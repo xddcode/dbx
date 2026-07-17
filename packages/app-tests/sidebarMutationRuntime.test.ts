@@ -57,5 +57,5 @@ test("menu and dialog mutations resolve immutable accepted targets", () => {
   assert.match(runtimeHost, /activateActionTarget\(target\)/);
   assert.match(runtimeHost, /findSidebarActionTarget\(connectionStore\.treeNodes, target\) \?\? target/);
   assert.match(runtimeHost, /routedRequest\.confirm = async \(\) => \{[\s\S]*?activateActionTarget\(target\)/);
-  assert.match(runtimeHost, /routedController\[key\] = \(\.\.\.args: unknown\[\]\) => \{[\s\S]*?activateActionTarget\(target\)/);
+  assert.match(runtimeHost, /createRoutedSidebarDialogController\(controller, \{[\s\S]*?wrapAction: \(action\) => \{[\s\S]*?activateActionTarget\(target\)/);
 });

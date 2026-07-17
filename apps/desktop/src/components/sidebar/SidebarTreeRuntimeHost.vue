@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, watch, onBeforeUnmount, inject, reactive, shallowRef } from "vue";
+import { createRoutedSidebarDialogController } from "./sidebarDialogControllerRouting";
 import { useSqlHighlighter } from "@/composables/useSqlHighlighter";
 import { useSidebarDataOpenRuntime } from "@/composables/useSidebarDataOpenRuntime";
 import { useSidebarConnectionMutationRuntime } from "@/composables/useSidebarConnectionMutationRuntime";
@@ -404,14 +405,15 @@ function routeTreeItemDialogController() {
   const controller = getTreeItemDialogController();
   const target = createSidebarActionTarget(activeNode.value);
   sidebarFormTarget.value = target;
-  const routedController = reactive<Record<string, any>>({ ...controller, node: target });
-  for (const [key, value] of Object.entries(controller)) {
-    if (typeof value !== "function") continue;
-    routedController[key] = (...args: unknown[]) => {
-      activateActionTarget(target);
-      return value(...args);
-    };
-  }
+  const routedController = createRoutedSidebarDialogController(controller, {
+    node: target,
+    wrapAction: (action) => {
+      return (...args: unknown[]) => {
+        activateActionTarget(target);
+        return action(...args);
+      };
+    },
+  });
   routedController.pasteTableDataCopySupported = pasteTableDataCopySupported.value;
   routedController.canSetCreateDatabaseCharset = canSetCreateDatabaseCharset.value;
   routedController.canEditDatabaseCharsetCollation = canEditDatabaseCharsetCollation.value;
