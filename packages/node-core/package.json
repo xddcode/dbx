@@ -26,10 +26,11 @@
   },
   "scripts": {
     "test": "vitest run --config vitest.config.ts",
-    "build": "tsc",
-    "prepublishOnly": "tsc"
+    "build": "pnpm --filter @dbx-app/mongo-shell build && tsc",
+    "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "@dbx-app/mongo-shell": "workspace:^",
     "better-sqlite3": "^12.9.0",
     "ioredis": "^5.11.1",
     "keytar": "^7.9.0",

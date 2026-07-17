@@ -88,6 +88,7 @@ import { isSchemaAware, isSingleDatabase, usesTreeSchemaMode } from "@/lib/datab
 import { codeMirrorSqlDialect, connectionUsesDatabaseObjectTreeMode, effectiveDatabaseTypeForConnection } from "@/lib/database/jdbcDialect";
 import { sqlFormatDialectForDbType } from "@/lib/sql/sqlFormatter";
 import { detectDatabaseFileType } from "@/lib/database/databaseFileDetection";
+import { ensureJdbcxRuntimeDrivers } from "@/lib/database/jdbcxBuiltinDriver";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -118,6 +119,7 @@ const connectionStore = useConnectionStore();
 const queryStore = useQueryStore();
 const settingsStore = useSettingsStore();
 const savedSqlStore = useSavedSqlStore();
+connectionStore.setBeforeConnectHandler((config) => ensureJdbcxRuntimeDrivers(config, api).then(() => undefined));
 const { message: toastMessage, visible: toastVisible, toast } = useToast();
 const { isDark, themeMode, applyTheme, setThemeMode } = useTheme();
 const { checkingUpdates, updateInfo, updateCheckMessage, showUpdateDialog, isDownloadingUpdate, downloadProgress, updateReady, hasUpdateAvailable, openUrl, checkUpdates, openLatestRelease, downloadAndInstallUpdate, restartApp } = useAppUpdater();
@@ -926,13 +928,8 @@ async function saveActiveSqlAsLocalFile() {
   const tab = activeTab.value;
   if (!tab || !canSaveSqlTab(tab) || !isTauriRuntime()) return;
   try {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const path = await save({
-      defaultPath: defaultSavedSqlName(tab.title),
-      filters: [{ name: "SQL", extensions: ["sql"] }],
-    });
+    const path = await api.saveExternalSqlFile(defaultSavedSqlName(tab.title), tab.sql);
     if (!path) return;
-    await api.writeExternalSqlFile(path, tab.sql);
     queryStore.linkExternalSqlPath(tab.id, path, sqlFileTitleFromPath(path));
     showSaveSqlDialog.value = false;
     closePendingSavedTab();

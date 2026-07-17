@@ -97,6 +97,7 @@ import {
   nextKeyboardTransposeState,
   nextTransposeState,
   nextTransposeStateForRecordCount,
+  restoreDataGridAfterTranspose,
   transposeRecordIndexesForMode,
   transposeRecordWidthsForDensity,
   transposeFieldWidth,
@@ -128,7 +129,7 @@ import { isCancelSearchShortcut, isCopyCurrentRowShortcut, isDeleteCurrentRowSho
 import { dataGridHeaderContentWidth, scrollbarGutterWidth } from "@/lib/dataGrid/dataGridScrollGutter";
 import { canGoNextDataGridPage } from "@/lib/dataGrid/dataGridPagination";
 import { dataGridCountQueryOptions } from "@/lib/dataGrid/dataGridQueryOptions";
-import { dataGridBottomScrollTop, dataGridScrollPosition, isDataGridAtScrollBottom, isDataGridNearScrollBottom, restoredDataGridScrollLeft, shouldCheckInfiniteScrollAfterScroll, type DataGridScrollPosition } from "@/lib/dataGrid/dataGridInfiniteScroll";
+import { dataGridBottomScrollTop, dataGridScrollPosition, isDataGridAtScrollBottom, isDataGridNearScrollBottom, shouldCheckInfiniteScrollAfterScroll, type DataGridScrollPosition } from "@/lib/dataGrid/dataGridInfiniteScroll";
 import { CANVAS_DATA_GRID_ROW_HEIGHT, drawCanvasDataGrid } from "@/lib/dataGrid/canvasDataGridRenderer";
 import { dataGridPreviewLabelKey, dataGridSaveActionMode, dataGridSaveToolbarState } from "@/lib/dataGrid/dataGridSaveUi";
 import type { QueryEditabilityReason } from "@/lib/sql/sqlAnalysis";
@@ -227,6 +228,8 @@ const connectionStore = useConnectionStore();
 const queryStore = useQueryStore();
 const settingsStore = useSettingsStore();
 const tableFontSize = computed(() => settingsStore.editorSettings.tableFontSize);
+const multiRowTranspose = computed(() => settingsStore.editorSettings.dataGridMultiRowTranspose);
+const hideNullColumns = computed(() => settingsStore.editorSettings.dataGridHideNullColumns);
 const { isDark, themePalette } = useTheme();
 const { toast } = useToast();
 const { highlight } = useSqlHighlighter();
@@ -342,7 +345,6 @@ if (isDebugLoggingEnabled()) {
 
 const transposeRowIndex = ref<number | null>(null);
 const showTranspose = ref(false);
-const multiRowTranspose = ref(false);
 const preserveTransposeOnNextResult = ref(false);
 
 watch(
@@ -1558,11 +1560,6 @@ function onSearchKeydown(e: KeyboardEvent) {
   }
 }
 
-function clearWhereFilterInput() {
-  whereFilterInput.value = "";
-  void applyWhereFilter();
-}
-
 watch(whereFilterInput, () => {
   emit("update:whereInput", currentWhereInput() ?? "");
   persistStructuredFilterState();
@@ -1675,6 +1672,8 @@ const {
   columnOrderKeys,
   layoutScopeKey: columnLayoutScopeKey,
   tableScopeKey: tableColumnOrderScopeKey,
+  hideNullColumns,
+  onHideNullColumnsChange: (value) => settingsStore.updateEditorSettings({ dataGridHideNullColumns: value }),
   onRefreshMetrics: refreshGridScrollerMetrics,
 });
 const goToColumnItems = computed(() =>
@@ -2664,6 +2663,7 @@ const editor = useDataGridEditor({
   pageSize,
   currentPage,
   cacheKey: computed(() => props.cacheKey),
+  onResultPayloadMutated: () => queryStore.invalidateResultEstimateForPayload(props.result),
   emit,
 });
 
@@ -4837,11 +4837,10 @@ function drawCanvasGrid() {
 }
 
 watch(
-  [useCanvasGridRows, hasVisibleRows],
+  [useCanvasGridRows, hasVisibleRows, isErrorResult],
   () => {
-    // When an empty table gets its first pending row, the canvas scroller is created by
-    // the v-if branch after the original mount-time observer attempt has already no-op'd.
-    // Reattach after that branch mounts so the canvas/overlay get real viewport dimensions.
+    // Empty and error surfaces replace the canvas scroller. Reattach after the
+    // normal branch remounts so the canvas/overlay get real viewport dimensions.
     nextTick(attachCanvasResizeObserver);
   },
   { immediate: true },
@@ -6115,7 +6114,8 @@ function scrollTransposeRecordIntoView(rowIndex: number) {
 }
 
 function setMultiRowTranspose(value: boolean) {
-  multiRowTranspose.value = value;
+  if (multiRowTranspose.value === value) return;
+  settingsStore.updateEditorSettings({ dataGridMultiRowTranspose: value });
   if (!showTranspose.value) return;
   nextTick(updateTransposeViewport);
   if (value && transposeRowIndex.value !== null) {
@@ -6303,12 +6303,12 @@ watch(isTransposeMode, (active) => {
   }
 
   nextTick(() => {
-    const scroller = gridScrollerElement();
-    if (!scroller) return;
-    // Transpose mode replaces the normal grid scroller, so restore its state and
-    // reconnect overflow observers only after Vue mounts the new element.
-    scroller.scrollLeft = restoredDataGridScrollLeft(gridScrollLeftBeforeTranspose, scroller.scrollWidth, scroller.clientWidth);
-    refreshGridScrollerMetrics();
+    restoreDataGridAfterTranspose({
+      scroller: gridScrollerElement(),
+      scrollLeftBeforeTranspose: gridScrollLeftBeforeTranspose,
+      attachCanvasResizeObserver,
+      refreshGridScrollerMetrics,
+    });
   });
 });
 
@@ -7441,7 +7441,6 @@ const gridContextMenuItems = computed<ContextMenuItem[]>(() => {
                   :mode-options="filterModeOptions"
                   :column-search="filterBuilderColumnSearch"
                   :apply-where="applyWhereFilter"
-                  :clear-where="clearWhereFilterInput"
                   :apply-order-by="applyOrderBySearch"
                   :clear-order-by="clearOrderByInput"
                   @update:column-search="filterBuilderColumnSearch = $event"

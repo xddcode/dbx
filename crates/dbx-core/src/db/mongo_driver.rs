@@ -1,7 +1,7 @@
 use mongodb::{
     bson::{doc, oid::ObjectId, Bson, DateTime, Document},
     options::{ClientOptions, GridFsBucketOptions, IndexOptions, UpdateModifications},
-    Client, Database, IndexModel,
+    Client, Cursor, Database, IndexModel,
 };
 use serde::{Deserialize, Serialize};
 
@@ -734,22 +734,86 @@ pub async fn find_documents_extended_json(
     Ok(MongoDocumentResult { extended_documents: Some(documents.clone()), documents, raw_documents: None, total })
 }
 
+/// Run `db.collection.aggregate(pipeline, options)`.
+///
+/// One execution model for every non-explain aggregate (empty or free-form options):
+/// build the server [`aggregate`](https://www.mongodb.com/docs/manual/reference/command/aggregate/)
+/// command and open it with [`Database::run_cursor_command`] so session-scoped getMore/killCursors
+/// stay with the driver cursor. Options are forwarded as-is (`allowDiskUse`, `cursor.batchSize`,
+/// `maxTimeMS`, collation, hint, comment, let, …).
+///
+/// `explain: true` is the only special case: the server returns a plan document (no cursor), so
+/// that path uses plain `run_command`.
+///
+/// Note: this intentionally uses the command/cursor path rather than `Collection::aggregate`, so
+/// default read/write concern inheritance matches other free-form shell options (explicit options
+/// on the command document only).
 pub async fn aggregate_documents(
     client: &Client,
     database: &str,
     collection: &str,
     pipeline_json: &str,
     max_rows: Option<usize>,
+    options_json: Option<&str>,
 ) -> Result<MongoDocumentResult, String> {
     let json: serde_json::Value =
         serde_json::from_str(pipeline_json).map_err(|e| format!("Invalid pipeline JSON: {e}"))?;
     let pipeline_values = json.as_array().ok_or_else(|| "Aggregate pipeline must be a JSON array".to_string())?;
-    let pipeline = pipeline_values
+    let pipeline_docs = pipeline_values
         .iter()
         .map(|value| json_object_to_document(value).map_err(|e| format!("Invalid pipeline stage: {e}")))
         .collect::<Result<Vec<Document>, String>>()?;
-    let col = client.database(database).collection::<Document>(collection);
-    let mut cursor = col.aggregate(pipeline).await.map_err(|e| e.to_string())?;
+
+    let options = parse_aggregate_options_document(options_json)?;
+    let (command, explain) = build_aggregate_command(collection, pipeline_docs, options)?;
+    let db = client.database(database);
+
+    if explain {
+        let result = db.run_command(command).await.map_err(|e| e.to_string())?;
+        let document = bson_to_json(&Bson::Document(result.clone()));
+        let extended = Bson::Document(result).into_relaxed_extjson();
+        return Ok(MongoDocumentResult {
+            documents: vec![document],
+            raw_documents: None,
+            extended_documents: Some(vec![extended]),
+            total: 1,
+        });
+    }
+
+    // Driver cursor owns the implicit session across aggregate + getMore + killCursors.
+    let mut cursor = db.run_cursor_command(command).await.map_err(|e| e.to_string())?;
+    drain_document_cursor(&mut cursor, max_rows).await
+}
+
+/// Build the server aggregate command document, preserving free-form options.
+/// Returns `(command, explain)` so callers branch only on the explain flag.
+fn build_aggregate_command(
+    collection: &str,
+    pipeline: Vec<Document>,
+    options: Document,
+) -> Result<(Document, bool), String> {
+    let explain = aggregate_options_explain(&options)?;
+    let pipeline_bson: Vec<Bson> = pipeline.into_iter().map(Bson::Document).collect();
+    let mut command = doc! {
+        "aggregate": collection,
+        "pipeline": pipeline_bson,
+    };
+    for (key, value) in options {
+        command.insert(key, value);
+    }
+    // Server requires `cursor` unless `explain` is true.
+    if !explain && !command.contains_key("cursor") {
+        command.insert("cursor", doc! {});
+    }
+    Ok((command, explain))
+}
+
+/// Drain a driver cursor up to `max_rows`, peeking one extra document so callers can detect
+/// truncation: when more rows exist, `total == max_rows + 1` while `documents.len() == max_rows`.
+async fn drain_document_cursor(
+    cursor: &mut Cursor<Document>,
+    max_rows: Option<usize>,
+) -> Result<MongoDocumentResult, String> {
     let max_rows = max_rows.unwrap_or(100);
     let fetch_limit = max_rows.saturating_add(1);
     let mut documents = Vec::new();
@@ -765,6 +829,28 @@ pub async fn aggregate_documents(
         extended_documents.truncate(max_rows);
     }
     Ok(MongoDocumentResult { documents, raw_documents: None, extended_documents: Some(extended_documents), total })
+}
+
+fn parse_aggregate_options_document(options_json: Option<&str>) -> Result<Document, String> {
+    let Some(raw) = options_json.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(Document::new());
+    };
+    let value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|e| format!("Invalid aggregate options JSON: {e}"))?;
+    if !value.is_object() {
+        return Err("Aggregate options must be a JSON object".to_string());
+    }
+    // Free-form object conversion keeps every official aggregate option (nested
+    // docs, hint strings, maxTimeMS numbers, comments, let vars, …) intact.
+    json_object_to_document(&value).map_err(|e| format!("Invalid aggregate options: {e}"))
+}
+
+fn aggregate_options_explain(options: &Document) -> Result<bool, String> {
+    match options.get("explain") {
+        None => Ok(false),
+        Some(Bson::Boolean(flag)) => Ok(*flag),
+        Some(_) => Err("aggregate options.explain must be a boolean (for example { explain: true })".to_string()),
+    }
 }
 
 /// Distinct values of a field, matching the mongo shell's `db.coll.distinct(field, filter)`:
@@ -1675,6 +1761,83 @@ fn expand_object_id_string_array(items: &[serde_json::Value]) -> Bson {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_aggregate_options_document_keeps_official_fields() {
+        let doc = parse_aggregate_options_document(Some(
+            r#"{
+                "explain": true,
+                "allowDiskUse": true,
+                "cursor": { "batchSize": 25 },
+                "maxTimeMS": 1000,
+                "bypassDocumentValidation": true,
+                "collation": { "locale": "en" },
+                "hint": "status_1",
+                "comment": "agg-test",
+                "let": { "year": 2024 },
+                "readConcern": { "level": "local" }
+            }"#,
+        ))
+        .unwrap();
+        assert_eq!(doc.get_bool("explain").ok(), Some(true));
+        assert_eq!(doc.get_bool("allowDiskUse").ok(), Some(true));
+        assert_eq!(doc.get_i64("maxTimeMS").ok(), Some(1000));
+        assert_eq!(doc.get_str("hint").ok(), Some("status_1"));
+        assert_eq!(doc.get_str("comment").ok(), Some("agg-test"));
+        assert_eq!(doc.get_document("cursor").ok().and_then(|c| c.get_i64("batchSize").ok()), Some(25));
+        assert_eq!(doc.get_document("collation").ok().and_then(|c| c.get_str("locale").ok()), Some("en"));
+        assert_eq!(doc.get_document("let").ok().and_then(|c| c.get_i64("year").ok()), Some(2024));
+        assert!(aggregate_options_explain(&doc).unwrap());
+
+        let no_explain = parse_aggregate_options_document(Some(r#"{"allowDiskUse":false}"#)).unwrap();
+        assert!(!aggregate_options_explain(&no_explain).unwrap());
+
+        let err = aggregate_options_explain(
+            &parse_aggregate_options_document(Some(r#"{"explain":"executionStats"}"#)).unwrap(),
+        )
+        .unwrap_err();
+        assert!(err.contains("boolean"), "{err}");
+    }
+
+    #[test]
+    fn build_aggregate_command_adds_cursor_unless_explain() {
+        let pipeline = vec![doc! { "$match": { "active": true } }];
+        let (with_cursor, explain_flag) = build_aggregate_command(
+            "products",
+            pipeline.clone(),
+            parse_aggregate_options_document(Some(r#"{"allowDiskUse":true,"cursor":{"batchSize":1}}"#)).unwrap(),
+        )
+        .unwrap();
+        assert!(!explain_flag);
+        assert_eq!(with_cursor.get_str("aggregate").ok(), Some("products"));
+        assert_eq!(with_cursor.get_bool("allowDiskUse").ok(), Some(true));
+        assert_eq!(with_cursor.get_document("cursor").ok().and_then(|c| c.get_i64("batchSize").ok()), Some(1));
+
+        let (default_cursor, _) = build_aggregate_command(
+            "products",
+            pipeline.clone(),
+            parse_aggregate_options_document(Some(r#"{"comment":"agg"}"#)).unwrap(),
+        )
+        .unwrap();
+        assert!(default_cursor.get_document("cursor").is_ok(), "non-explain aggregate requires cursor");
+        assert_eq!(default_cursor.get_str("comment").ok(), Some("agg"));
+
+        // Empty options still produce a cursor command (single path with run_cursor_command).
+        let (empty_options, empty_explain) =
+            build_aggregate_command("products", pipeline.clone(), Document::new()).unwrap();
+        assert!(!empty_explain);
+        assert!(empty_options.get_document("cursor").is_ok());
+
+        let (explain, is_explain) = build_aggregate_command(
+            "products",
+            pipeline,
+            parse_aggregate_options_document(Some(r#"{"explain":true,"allowDiskUse":true}"#)).unwrap(),
+        )
+        .unwrap();
+        assert!(is_explain);
+        assert!(explain.get("cursor").is_none(), "explain path must not inject cursor");
+        assert_eq!(explain.get_bool("explain").ok(), Some(true));
+    }
 
     #[test]
     fn update_modifications_accept_document_and_pipeline() {

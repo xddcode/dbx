@@ -128,6 +128,7 @@ pub struct MongoAggregateRequest {
     pub pipeline_json: String,
     pub max_rows: Option<usize>,
     pub execution_id: Option<String>,
+    pub options_json: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -439,6 +440,7 @@ pub async fn aggregate_documents(
             &req.collection,
             &req.pipeline_json,
             req.max_rows,
+            req.options_json.as_deref(),
         ),
     )
     .await?;

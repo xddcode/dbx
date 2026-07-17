@@ -203,6 +203,7 @@ pub async fn mongo_aggregate_documents(
     collection: String,
     pipeline_json: String,
     max_rows: Option<usize>,
+    options_json: Option<String>,
     execution_id: Option<String>,
 ) -> Result<MongoDocumentResult, String> {
     let app = state.inner().clone();
@@ -216,6 +217,7 @@ pub async fn mongo_aggregate_documents(
             &collection,
             &pipeline_json,
             max_rows,
+            options_json.as_deref(),
         ),
     )
     .await

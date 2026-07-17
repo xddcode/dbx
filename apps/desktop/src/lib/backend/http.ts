@@ -1430,6 +1430,10 @@ export async function writeExternalSqlFile(_path: string, _content: string): Pro
   throw new Error("Saving external SQL file paths is only available in the desktop app");
 }
 
+export async function saveExternalSqlFile(_defaultFileName: string, _content: string): Promise<string | null> {
+  throw new Error("Saving SQL files locally is only available in the desktop app");
+}
+
 export interface SqlFileEntry {
   name: string;
   path: string;
@@ -2136,8 +2140,8 @@ export async function mongoServerVersion(connectionId: string, database: string,
   return post("/api/mongo/server-version", { connectionId, database, executionId });
 }
 
-export async function mongoAggregateDocuments(connectionId: string, database: string, collection: string, pipelineJson: string, maxRows?: number, executionId?: string): Promise<MongoDocumentResult> {
-  return post("/api/mongo/aggregate-documents", { connectionId, database, collection, pipelineJson, maxRows, executionId });
+export async function mongoAggregateDocuments(connectionId: string, database: string, collection: string, pipelineJson: string, maxRows?: number, optionsJson?: string, executionId?: string): Promise<MongoDocumentResult> {
+  return post("/api/mongo/aggregate-documents", { connectionId, database, collection, pipelineJson, maxRows, optionsJson, executionId });
 }
 
 export async function mongoDistinct(connectionId: string, database: string, collection: string, field: string, filter?: string, executionId?: string): Promise<MongoDocumentResult> {

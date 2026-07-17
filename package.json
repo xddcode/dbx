@@ -9,7 +9,7 @@
     "dev:tauri": "tauri dev",
     "dev:web": "vite --config apps/desktop/vite.config.ts --port 5173 --mode web",
     "dev:backend": "node scripts/dev-backend.mjs",
-    "build:packages": "pnpm --filter @dbx-app/node-core build && pnpm --filter @dbx-app/cli build && pnpm --filter @dbx-app/mcp-server build",
+    "build:packages": "pnpm --filter @dbx-app/mongo-shell build && pnpm --filter @dbx-app/node-core build && pnpm --filter @dbx-app/cli build && pnpm --filter @dbx-app/mcp-server build",
     "test:packages": "pnpm --filter @dbx-app/node-core test && pnpm --filter @dbx-app/cli test && pnpm --filter @dbx-app/mcp-server test",
     "pack:packages": "rm -rf /tmp/dbx-pack-check && mkdir -p /tmp/dbx-pack-check && pnpm --filter @dbx-app/node-core pack --pack-destination /tmp/dbx-pack-check && pnpm --filter @dbx-app/cli pack --pack-destination /tmp/dbx-pack-check && pnpm --filter @dbx-app/mcp-server pack --pack-destination /tmp/dbx-pack-check",
     "publish:dry-run": "pnpm build:packages && pnpm pack:packages",
@@ -32,6 +32,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@dbx-app/mongo-shell": "workspace:^",
     "@babel/runtime": "^7.29.7",
     "@codemirror/autocomplete": "^6.20.2",
     "@codemirror/commands": "^6.10.3",

@@ -50,6 +50,9 @@ importers:
       '@codemirror/view':
         specifier: ^6.43.0
         version: 6.43.0
+      '@dbx-app/mongo-shell':
+        specifier: workspace:^
+        version: link:packages/mongo-shell
       '@lezer/highlight':
         specifier: ^1.2.3
         version: 1.2.3
@@ -267,8 +270,17 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
+  packages/mongo-shell:
+    devDependencies:
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
   packages/node-core:
     dependencies:
+      '@dbx-app/mongo-shell':
+        specifier: workspace:^
+        version: link:../mongo-shell
       better-sqlite3:
         specifier: ^12.9.0
         version: 12.10.0

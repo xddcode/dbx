@@ -613,6 +613,10 @@ export async function writeExternalSqlFile(path: string, content: string): Promi
   return invoke("write_external_sql_file", { path, content });
 }
 
+export async function saveExternalSqlFile(defaultFileName: string, content: string): Promise<string | null> {
+  return invoke("save_external_sql_file", { defaultFileName, content });
+}
+
 export interface SqlFileEntry {
   name: string;
   path: string;
@@ -1907,8 +1911,8 @@ export async function mongoServerVersion(connectionId: string, database: string,
   return invoke("mongo_server_version", { connectionId, database, executionId });
 }
 
-export async function mongoAggregateDocuments(connectionId: string, database: string, collection: string, pipelineJson: string, maxRows?: number, executionId?: string): Promise<MongoDocumentResult> {
-  return invoke("mongo_aggregate_documents", { connectionId, database, collection, pipelineJson, maxRows, executionId });
+export async function mongoAggregateDocuments(connectionId: string, database: string, collection: string, pipelineJson: string, maxRows?: number, optionsJson?: string, executionId?: string): Promise<MongoDocumentResult> {
+  return invoke("mongo_aggregate_documents", { connectionId, database, collection, pipelineJson, maxRows, optionsJson, executionId });
 }
 
 export async function mongoDistinct(connectionId: string, database: string, collection: string, field: string, filter?: string, executionId?: string): Promise<MongoDocumentResult> {

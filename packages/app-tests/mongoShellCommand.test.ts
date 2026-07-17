@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "vitest";
 import {
+  describeMongoCommandParseFailure,
   evaluateMongoAggregateSafety,
   evaluateMongoWriteSafety,
   mongoAggregateWriteStage,
@@ -439,10 +440,66 @@ test("parseMongoAggregateCommand accepts an empty pipeline", () => {
   });
 });
 
-test("parseMongoAggregateCommand rejects non-array pipelines and extra arguments", () => {
+test("parseMongoAggregateCommand accepts official aggregate options document", () => {
+  assert.deepEqual(parseMongoAggregateCommand("db.products.aggregate([], {})"), {
+    collection: "products",
+    pipeline: "[]",
+    options: "{}",
+  });
+  const withExplain = parseMongoAggregateCommand("db.uc_user.aggregate([], {explain: true})");
+  assert.equal(withExplain?.collection, "uc_user");
+  assert.equal(withExplain?.pipeline, "[]");
+  assert.deepEqual(JSON.parse(withExplain?.options ?? "null"), { explain: true });
+
+  // Official aggregate options are parsed as a free-form object and forwarded to the server.
+  const fullOptions = parseMongoAggregateCommand(`db.products.aggregate(
+    [{"$match":{"active":true}}],
+    {
+      allowDiskUse: true,
+      cursor: { batchSize: 50 },
+      maxTimeMS: 1000,
+      collation: { locale: "en" },
+      hint: "status_1",
+      comment: "agg-test",
+      let: { year: 2024 }
+    }
+  )`);
+  assert.equal(fullOptions?.collection, "products");
+  assert.deepEqual(JSON.parse(fullOptions?.pipeline ?? "null"), [{ $match: { active: true } }]);
+  assert.deepEqual(JSON.parse(fullOptions?.options ?? "null"), {
+    allowDiskUse: true,
+    cursor: { batchSize: 50 },
+    maxTimeMS: 1000,
+    collation: { locale: "en" },
+    hint: "status_1",
+    comment: "agg-test",
+    let: { year: 2024 },
+  });
+});
+
+test("parseMongoAggregateCommand rejects non-array pipelines and invalid options", () => {
   assert.equal(parseMongoAggregateCommand('db.products.aggregate({"$match":{}})'), null);
-  assert.equal(parseMongoAggregateCommand("db.products.aggregate([], {})"), null);
+  assert.equal(parseMongoAggregateCommand("db.products.aggregate([], [])"), null);
+  assert.equal(parseMongoAggregateCommand("db.products.aggregate([], {explain: true"), null);
   assert.equal(parseMongoAggregateCommand("db.products.aggregate([]).limit(10)"), null);
+  assert.equal(parseMongoAggregateCommand("db.products.aggregate([], {}, true)"), null);
+});
+
+test("describeMongoCommandParseFailure reports unclosed delimiters and shell hints", () => {
+  const unclosed = describeMongoCommandParseFailure("db.uc_user.aggregate([], {explain: true");
+  assert.match(unclosed, /unclosed/i);
+
+  const chained = describeMongoCommandParseFailure("db.products.aggregate([]).limit(10)");
+  assert.match(chained, /chaining|not supported/i);
+
+  const nonArrayPipeline = describeMongoCommandParseFailure('db.products.aggregate({"$match":{}})');
+  assert.match(nonArrayPipeline, /pipeline must be a JSON array/i);
+
+  const badOptions = describeMongoCommandParseFailure("db.products.aggregate([], [])");
+  assert.match(badOptions, /options must be a JSON object/i);
+
+  const generic = describeMongoCommandParseFailure("SELECT 1");
+  assert.match(generic, /MongoDB shell-style commands/i);
 });
 
 test("parseMongoAggregateCommand normalises ObjectId arguments with either quote style", () => {

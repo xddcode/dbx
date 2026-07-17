@@ -351,6 +351,14 @@ const editExportBatchSize = ref(settingsStore.editorSettings.exportBatchSize);
 const editGlobalDateTimeDisplayFormat = ref(settingsStore.editorSettings.globalDateTimeDisplayFormat);
 const editGlobalDateTimeExportFormat = ref(settingsStore.editorSettings.globalDateTimeExportFormat);
 const editGlobalDateTimeImportFormat = ref(settingsStore.editorSettings.globalDateTimeImportFormat);
+/** Empty first option restores default (raw/auto); avoids using tab-wide "reset defaults". */
+const globalDateTimeFormatOptions = ["", ...DateTimePatterns];
+function globalDateTimeRawFormatLabel(option: string): string {
+  return option || t("settings.dateTimeFormatRaw");
+}
+function globalDateTimeAutoFormatLabel(option: string): string {
+  return option || t("settings.dateTimeFormatAuto");
+}
 const editExportRowLimitEnabled = ref(settingsStore.editorSettings.exportRowLimitEnabled);
 const editExportRowLimit = ref(settingsStore.editorSettings.exportRowLimit);
 const editQueryExportKeysetOptimizationEnabled = ref(settingsStore.editorSettings.queryExportKeysetOptimizationEnabled);
@@ -3869,7 +3877,8 @@ onUnmounted(cleanupPreviewEditor);
                   </div>
                   <SearchableSelect
                     v-model="editGlobalDateTimeDisplayFormat"
-                    :options="DateTimePatterns"
+                    :options="globalDateTimeFormatOptions"
+                    :display-name="globalDateTimeRawFormatLabel"
                     :placeholder="t('settings.dateTimeFormatRaw')"
                     :search-placeholder="t('settings.dateTimeFormatSearchPlaceholder')"
                     :empty-text="t('settings.dateTimeFormatEmpty')"
@@ -3885,7 +3894,8 @@ onUnmounted(cleanupPreviewEditor);
                   </div>
                   <SearchableSelect
                     v-model="editGlobalDateTimeExportFormat"
-                    :options="DateTimePatterns"
+                    :options="globalDateTimeFormatOptions"
+                    :display-name="globalDateTimeRawFormatLabel"
                     :placeholder="t('settings.dateTimeFormatRaw')"
                     :search-placeholder="t('settings.dateTimeFormatSearchPlaceholder')"
                     :empty-text="t('settings.dateTimeFormatEmpty')"
@@ -3901,7 +3911,8 @@ onUnmounted(cleanupPreviewEditor);
                   </div>
                   <SearchableSelect
                     v-model="editGlobalDateTimeImportFormat"
-                    :options="DateTimePatterns"
+                    :options="globalDateTimeFormatOptions"
+                    :display-name="globalDateTimeAutoFormatLabel"
                     :placeholder="t('settings.dateTimeFormatAuto')"
                     :search-placeholder="t('settings.dateTimeFormatSearchPlaceholder')"
                     :empty-text="t('settings.dateTimeFormatEmpty')"
