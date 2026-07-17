@@ -1774,12 +1774,26 @@ function scrollToColumnIndex(columnIndex: number) {
 
 // --- Column resize composable ---
 const columnWidthDensity = computed(() => settingsStore.editorSettings.columnWidthDensity);
+let columnHeaderMeasureContext: CanvasRenderingContext2D | null | undefined;
+
+function measureColumnHeaderText(text: string): number | undefined {
+  if (typeof document === "undefined") return undefined;
+  if (columnHeaderMeasureContext === undefined) columnHeaderMeasureContext = document.createElement("canvas").getContext("2d");
+  if (!columnHeaderMeasureContext) return undefined;
+  // Match the rendered semibold header font instead of estimating proportional glyphs by character count.
+  const fontFamily = getComputedStyle(gridRef.value ?? document.body).fontFamily || "sans-serif";
+  columnHeaderMeasureContext.font = `600 ${tableFontSize.value}px ${fontFamily}`;
+  return Math.ceil(columnHeaderMeasureContext.measureText(text).width);
+}
+
 const { initColumnWidths, onResizeStart, autoFitColumn, renderedColumnWidths, totalWidth, columnVars, getIsResizing } = useDataGridColumnResize({
   columns: visibleColumns,
   sourceRows: computed(() => props.result.rows),
   columnIndexes: visibleColumnIndexes,
   density: columnWidthDensity,
   compactColumnHeaderActions,
+  measureHeaderText: measureColumnHeaderText,
+  headerMeasurementKey: tableFontSize,
 });
 const gridStyle = computed(() => ({
   ...columnVars.value,
