@@ -179,7 +179,7 @@
             fetcherVersion = 4;
             # Replace with the correct hash after the first failed build:
             #   nix build .#dbx-desktop 2>&1 | grep 'got:'
-            hash = "sha256-nXd3B+34c47Oe3uLCV7Uicz7kIaHRDvpBmMk8wrFs0M=";
+            hash = "sha256-x6uRTLXUUXh9lHoXJDkJxvb68eEgCOAqOB9P+zp13fw=";
           };
 
           # ── Step 2: vendor Cargo dependencies ───────────────────────────── #
