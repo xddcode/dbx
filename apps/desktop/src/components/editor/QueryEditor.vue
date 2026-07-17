@@ -447,7 +447,6 @@ function handleTab(view: EditorViewType): boolean {
 }
 
 interface RequestExecuteOptions {
-  forceCurrent?: boolean;
   ignoreSelection?: boolean;
 }
 
@@ -472,11 +471,6 @@ function requestExecuteFromView(currentView: EditorViewType, cursorPos: number, 
   const doc = currentView.state.doc.toString();
   const candidates = buildExecutionCandidates(doc, cursorPos, props.databaseType);
   if (candidates.length === 0) return false;
-  if (options.forceCurrent) {
-    const candidate = candidates.find((item) => item.kind === "cursor") ?? candidates[0];
-    emit("execute", candidate.sql);
-    return true;
-  }
   if (!settingsStore.editorSettings.showExecutionTargetPicker || !hasMultipleExecutionTargets(doc, props.databaseType)) {
     const preferredKind = settingsStore.editorSettings.executeMode === "current" ? "cursor" : "all";
     const candidate = candidates.find((item) => item.kind === preferredKind) ?? candidates[0];
@@ -1148,7 +1142,8 @@ function runKeymapExtension(codeMirrorKeymap: (typeof import("@codemirror/view")
   const shortcuts = normalizeShortcutSettings(settingsStore.editorSettings.shortcuts);
   const Prec = codeMirrorPrec;
   const binding = (shortcut: string, run: (view: EditorViewType) => boolean) => (shortcut ? [{ key: shortcutToCodeMirrorKey(shortcut), preventDefault: true, run }] : []);
-  const executeBindings = props.hideExecutionControls ? [] : binding(shortcuts.executeSql, () => requestExecute({ forceCurrent: true }));
+  // Keep the shortcut on the shared path so selection, picker, and execute-mode behavior stay aligned with other execution entry points.
+  const executeBindings = props.hideExecutionControls ? [] : binding(shortcuts.executeSql, () => requestExecute());
   return [
     Prec?.high(
       codeMirrorKeymap.of([
