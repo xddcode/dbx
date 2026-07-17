@@ -116,6 +116,7 @@ export function createDataGridCellContextMenuItems(options: {
   downloadItem?: DataGridContextMenuItem | null;
   copySubmenu: DataGridContextMenuItem;
   selectionSubmenu: DataGridContextMenuItem;
+  generateSubmenu?: DataGridContextMenuItem;
 }): DataGridContextMenuItem[] {
   const items: DataGridContextMenuItem[] = [];
   if (options.hasCell) {
@@ -130,6 +131,7 @@ export function createDataGridCellContextMenuItems(options: {
   if (options.editable && options.hasCellSelection) {
     if (!options.headerColumn) items.push({ label: options.labels.setNull, action: options.actions.setNull, disabled: !options.hasEditableSelection, icon: options.icons.setNull });
     items.push({ label: options.labels.bulkEdit, action: options.actions.bulkEdit, disabled: !options.hasEditableSelection, icon: options.icons.bulkEdit });
+    if (options.generateSubmenu) items.push(options.generateSubmenu);
   }
   if (options.hasCell) items.push({ label: options.labels.transpose, action: options.actions.transpose, icon: options.icons.transpose });
   if (options.hasSelection) items.push(options.selectionSubmenu);

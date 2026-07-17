@@ -58,6 +58,19 @@ export interface CustomColumnFormatterConfig {
   template: string;
 }
 
+interface IntlTimeZoneSupport {
+  supportedValuesOf?: (key: "timeZone") => string[];
+}
+
+export function getSupportedTimeZoneOptions(intl: IntlTimeZoneSupport, fallbackTimeZone = "UTC"): string[] {
+  try {
+    const timeZones = intl.supportedValuesOf?.("timeZone");
+    if (timeZones?.length) return timeZones;
+  } catch {}
+  // Older WebViews may omit or throw from this API, so keep the detected timezone selectable.
+  return [fallbackTimeZone || "UTC"];
+}
+
 export function normalizeSupportedDateTimePattern(value: string): string {
   const pattern = value.trim();
   if (!pattern || pattern.length > 100 || pattern.includes("%")) return "";
@@ -85,7 +98,12 @@ export function normalizeSupportedDateTimePattern(value: string): string {
   return pattern;
 }
 
-export type ColumnFormatterConfig = { kind: "datetime"; unit: DateTimeFormatterUnit; pattern: string } | { kind: "json-path"; path: string } | { kind: "mask"; prefix: number; suffix: number } | { kind: "custom-template"; template: string } | { kind: "custom-ref"; formatterId: string };
+export type ColumnFormatterConfig =
+  | { kind: "datetime"; unit: DateTimeFormatterUnit; pattern: string; timezone: string | undefined }
+  | { kind: "json-path"; path: string }
+  | { kind: "mask"; prefix: number; suffix: number }
+  | { kind: "custom-template"; template: string }
+  | { kind: "custom-ref"; formatterId: string };
 
 export interface ColumnFormatterKeyParts {
   connectionId: string;
@@ -101,7 +119,7 @@ export function buildColumnFormatterKey(parts: ColumnFormatterKeyParts): string 
 
 export function normalizeColumnFormatter(value: unknown): ColumnFormatterConfig | undefined {
   if (!value || typeof value !== "object") return undefined;
-  const config = value as Record<string, unknown>;
+  const config = value as Record<string, any>;
 
   if (config.kind === "datetime") {
     return config.unit === "seconds" || config.unit === "milliseconds" || config.unit === "auto"
@@ -109,6 +127,7 @@ export function normalizeColumnFormatter(value: unknown): ColumnFormatterConfig 
           kind: "datetime",
           unit: config.unit,
           pattern: normalizeDateTimePattern(config.pattern),
+          timezone: config.timezone,
         }
       : undefined;
   }
@@ -171,7 +190,7 @@ export function isTemporalColumnType(dataType: string | null | undefined): boole
 export function resolveColumnFormatter(formatter: ColumnFormatterConfig | undefined, customFormatters: Record<string, CustomColumnFormatterConfig>, globalDateTime?: { pattern?: string; columnType?: string | null }): ColumnFormatterConfig | undefined {
   if (!formatter) {
     const pattern = normalizeGlobalDateTimePattern(globalDateTime?.pattern);
-    return pattern && isTemporalColumnType(globalDateTime?.columnType) ? { kind: "datetime", unit: "auto", pattern } : undefined;
+    return pattern && isTemporalColumnType(globalDateTime?.columnType) ? { kind: "datetime", unit: "auto", pattern, timezone: undefined } : undefined;
   }
   if (formatter.kind !== "custom-ref") return formatter;
   const customFormatter = customFormatters[formatter.formatterId];
@@ -207,14 +226,14 @@ function formatTemporalValueForExport(value: CellValue, pattern: string): string
       }
     }
   }
-  return applyColumnFormatter(value, { kind: "datetime", unit: "auto", pattern });
+  return applyColumnFormatter(value, { kind: "datetime", unit: "auto", pattern, timezone: undefined });
 }
 
 export function applyColumnFormatter(value: CellValue, formatter: ColumnFormatterConfig | undefined): string {
   if (!formatter) return displayCellValue(value);
 
   try {
-    if (formatter.kind === "datetime") return formatDateTime(value, formatter.unit, formatter.pattern);
+    if (formatter.kind === "datetime") return formatDateTime(value, formatter.unit, formatter.pattern, formatter.timezone);
     if (formatter.kind === "json-path") return formatJsonPath(value, formatter.path);
     if (formatter.kind === "mask") return formatMask(value, formatter);
     if (formatter.kind === "custom-template") return formatCustomTemplate(value, formatter.template);
@@ -224,12 +243,17 @@ export function applyColumnFormatter(value: CellValue, formatter: ColumnFormatte
   }
 }
 
-function formatDateTime(value: CellValue, unit: DateTimeFormatterUnit, pattern: string): string {
+function formatDateTime(value: CellValue, unit: DateTimeFormatterUnit, pattern: string, timezone: string | undefined): string {
   if (value === null) return displayCellValue(value);
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "object") return JSON.stringify(value);
   const parsed: Dayjs | undefined = resolveDateTimeValue(value, unit);
-  return parsed ? parsed.format(pattern || DEFAULT_DATETIME_PATTERN) : displayCellValue(value);
+  if (parsed) {
+    const template = pattern || DEFAULT_DATETIME_PATTERN;
+    return timezone ? parsed.tz(timezone).format(template) : parsed.format(template);
+  } else {
+    return displayCellValue(value);
+  }
 }
 
 function resolveDateTimeValue(value: string | number, unit: DateTimeFormatterUnit) {

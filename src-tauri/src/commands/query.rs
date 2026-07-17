@@ -85,13 +85,13 @@ pub async fn execute_multi(
     let cancel_token = registered_query.as_ref().map(|query| query.token());
     let trace_id = execution_id.as_deref().unwrap_or("no-execution-id").to_string();
     let started_at = Instant::now();
+    dbx_core::sql_diagnostics::debug_sql("query:execute_multi:start", &sql);
     log::info!(
-        "[query][execute_multi:start] trace_id={} connection_id={} database={} schema={:?} sql={}",
+        "[query][execute_multi:start] trace_id={} connection_id={} database={} schema={:?}",
         trace_id,
         connection_id,
         database,
-        schema,
-        sql
+        schema
     );
 
     let result = dbx_core::query::execute_multi_core_with_options_for_client(
