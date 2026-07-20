@@ -14,6 +14,7 @@ import type {
   ObjectSource,
   ObjectSourceKind,
   ColumnInfo,
+  SqlServerColumnMetadata,
   IndexInfo,
   ForeignKeyInfo,
   TriggerInfo,
@@ -37,6 +38,7 @@ import type {
   SshConfigHostEntry,
   TunnelProfile,
 } from "@/types/database";
+import { normalizeRustMongoCommand, type MongoCommand } from "@/lib/mongo/mongoShellCommand";
 import type { CollectionInfo } from "@/types/database";
 import type { SchemaDiffPreparation, SchemaDiffPreparationOptions, TableDiff, FunctionDiff, SequenceDiff, RuleDiff, OwnerDiff } from "@/lib/schema/schemaDiff";
 import type { SidebarObjectKind } from "@/lib/database/databaseObjectCapabilities";
@@ -639,6 +641,10 @@ export async function getColumns(connectionId: string, database: string, schema:
   return get(`/api/schema/columns?${qs({ connection_id: connectionId, database, schema, table, catalog })}`);
 }
 
+export async function getSqlServerColumnMetadata(connectionId: string, database: string, schema: string, table: string): Promise<SqlServerColumnMetadata[]> {
+  return get(`/api/schema/sqlserver/column-metadata?${qs({ connection_id: connectionId, database, schema, table })}`);
+}
+
 export async function listDataTypes(connectionId: string, database: string): Promise<string[]> {
   return get(`/api/schema/data-types?${qs({ connection_id: connectionId, database })}`);
 }
@@ -810,12 +816,8 @@ export async function buildCreateUserSql(username: string, password: string, tab
 }
 
 export async function getExplainInfo(connectionId: string, database: string | undefined, schema: string | undefined, sql: string, mode: string): Promise<string | undefined> {
-  try {
-    const result = await post<string>("/api/query/get-explain-info", { connectionId, database, schema, sql, mode });
-    return result;
-  } catch {
-    return undefined;
-  }
+  // Match the Tauri path: transport and Agent failures must remain distinguishable from an empty plan.
+  return post<string>("/api/query/get-explain-info", { connectionId, database, schema, sql, mode });
 }
 
 export async function buildDroppedFilePreviewSql(options: DroppedFilePreviewSqlOptions): Promise<string | undefined> {
@@ -2073,6 +2075,11 @@ export async function vectorGetCollectionDetail(connectionId: string, database: 
 
 export async function mongoFindDocuments(connectionId: string, database: string, collection: string, skip: number, limit: number, filter?: string, projection?: string, sort?: string, executionId?: string): Promise<MongoDocumentResult> {
   return documentFindDocuments(connectionId, database, collection, skip, limit, filter, projection, sort, executionId);
+}
+
+export async function mongoParseShellCommand(source: string): Promise<MongoCommand> {
+  const raw = await post<Record<string, unknown>>("/api/mongo/parse-shell-command", { source });
+  return normalizeRustMongoCommand(raw);
 }
 
 export async function mongoFindOne(connectionId: string, database: string, collection: string, filter?: string, projection?: string, options?: string, executionId?: string): Promise<MongoDocumentResult> {

@@ -1210,7 +1210,7 @@ function onLocaleChange(v: any) {
 }
 
 function onUpdateDownloadSourceChange(v: any) {
-  if (v === "official" || v === "cnb" || v === "atomgit") editUpdateDownloadSource.value = v;
+  if (v === "official" || v === "cnb") editUpdateDownloadSource.value = v;
 }
 
 function setSidebarObjectDisplay(value: "grouped" | "simple") {
@@ -1801,6 +1801,12 @@ async function scrollToInitialSettingsSection() {
   }
 }
 
+// AI Config List Mode — declared before the immediate watcher to avoid TDZ crash
+const aiConfigListMode = ref<"list" | "edit">("list");
+const aiEditConfigName = ref("");
+const aiEditConfigId = ref<string | null>(null);
+const displayedAiConfigs = computed(() => orderAiConfigsForDisplay(settingsStore.aiConfigs));
+
 watch(
   () => settingsVisible.value,
   async (open) => {
@@ -1934,11 +1940,6 @@ async function changePassword() {
 }
 
 // ---------- AI Settings ----------
-// AI Config List Mode
-const aiConfigListMode = ref<"list" | "edit">("list");
-const aiEditConfigName = ref("");
-const aiEditConfigId = ref<string | null>(null);
-const displayedAiConfigs = computed(() => orderAiConfigsForDisplay(settingsStore.aiConfigs));
 
 // AI Config Delete Confirmation
 const aiDeleteConfirmOpen = ref(false);
@@ -5006,7 +5007,6 @@ onUnmounted(cleanupPreviewEditor);
                     <SelectContent>
                       <SelectItem value="official">{{ t("settings.updateDownloadSourceOfficial") }}</SelectItem>
                       <SelectItem value="cnb">{{ t("settings.updateDownloadSourceCnb") }}</SelectItem>
-                      <SelectItem value="atomgit">{{ t("settings.updateDownloadSourceAtomgit") }}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

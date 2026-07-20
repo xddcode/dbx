@@ -21,7 +21,7 @@ import { CONNECTION_ATTEMPT_CANCELLED_MESSAGE, useConnectionStore } from "@/stor
 import { useTunnelProfileStore } from "@/stores/tunnelProfileStore";
 import { detachTunnelProfileLayer, tunnelProfileReferenceLayer, tunnelProfileSummary } from "@/lib/connection/tunnelProfiles";
 import { applySshConfigHostAliasPrefill as prefillSshConfigHostAlias } from "@/lib/connection/sshConfigHosts";
-import { connectionEditDraftSyncAction } from "./connectionEditDraftSync";
+import { canPersistConnectionTestResult, connectionEditDraftSyncAction } from "./connectionEditDraftSync";
 import { REDIS_SCAN_PAGE_SIZE_DEFAULT, REDIS_SCAN_PAGE_SIZE_MIN, REDIS_SCAN_PAGE_SIZE_MAX, REDIS_SCAN_PAGE_SIZE_OPTIONS } from "@/lib/redis/redisKeyPattern";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useToast } from "@/composables/useToast";
@@ -45,6 +45,7 @@ import { JDBCX_DEFAULT_URL, JDBCX_DRIVER_PROFILE, JDBCX_JDBC_DRIVER_CLASS, ensur
 import { SQLITE_DATABASE_FILE_EXTENSIONS } from "@/lib/database/databaseFileDetection";
 import { connectionAttemptOriginalErrorMessage, connectionAttemptTimeoutMessage, connectionAttemptTimeoutMs } from "@/lib/connection/connectionAttemptTimeout";
 import { appendConnectionErrorHints } from "@/lib/connection/connectionErrorHints";
+import { postgresTlsModeForForm } from "@/lib/connection/postgresTlsMode";
 import { normalizeKafkaBootstrapServers } from "@/lib/connection/kafkaBootstrapServers";
 import { detectMqUiAuthKind, isMqAuthKindAllowedForSystem, type MqUiAuthKind } from "@/lib/connection/mqAuth";
 import { driverInstallProgressPercent, type DriverInstallProgress } from "@/lib/connection/driverInstallProgressUi";
@@ -87,6 +88,7 @@ import { oceanbaseModeConnectionPatch, oceanbaseSubModeFromConfig } from "@/lib/
 import { translateBackendError } from "@/i18n/backend-errors";
 import { applyHiveKerberosSubmitConfig, hiveKerberosFormConfig, type HiveKerberosAuthMode } from "@/lib/database/hiveKerberosOptions";
 import { hasCloudflareD1Credentials, isCloudflareD1Connection, normalizeCloudflareD1Connection } from "@/lib/connection/cloudflareD1";
+import { buildElasticsearchExternalConfig, elasticsearchConnectionModeFromConfig, elasticsearchKibanaBasePathFromConfig, type ElasticsearchConnectionMode } from "@/lib/connection/elasticsearchKibanaProxy";
 
 type DbOption = { value: string; label: string };
 type DbCategory = { key: string; title: string; options: DbOption[] };
@@ -249,6 +251,31 @@ const defaultForm = (): ConnectionForm => ({
   production_databases: [],
   visible_databases: undefined,
 });
+
+const elasticsearchConnectionMode = ref<ElasticsearchConnectionMode>("direct");
+const elasticsearchKibanaBasePath = ref("");
+const elasticsearchConnectionPorts = ref<Record<ElasticsearchConnectionMode, number>>({
+  direct: 9200,
+  kibana: 5601,
+});
+
+function resetElasticsearchProxyFields(externalConfig?: unknown) {
+  const mode = elasticsearchConnectionModeFromConfig(externalConfig);
+  elasticsearchConnectionMode.value = mode;
+  elasticsearchKibanaBasePath.value = elasticsearchKibanaBasePathFromConfig(externalConfig);
+  elasticsearchConnectionPorts.value = {
+    direct: mode === "direct" ? form.value.port : 9200,
+    kibana: mode === "kibana" ? form.value.port : 5601,
+  };
+}
+
+function switchElasticsearchConnectionMode(mode: ElasticsearchConnectionMode) {
+  if (mode === elasticsearchConnectionMode.value) return;
+  elasticsearchConnectionPorts.value[elasticsearchConnectionMode.value] = form.value.port;
+  form.value.port = elasticsearchConnectionPorts.value[mode];
+  elasticsearchConnectionMode.value = mode;
+  resetTestState();
+}
 
 function defaultSshTunnel(): SshTunnelConfig {
   return {
@@ -1298,12 +1325,35 @@ function applySuccessfulConnectionTest(result: ConnectionTestResult, config: Con
   testedGeneratedName.value = config.name;
 }
 
-async function persistSuccessfulConnectionTest(result: ConnectionTestResult, config: ConnectionConfig, sourceName: string) {
+async function persistSuccessfulConnectionTest(result: ConnectionTestResult, config: ConnectionConfig, sourceName: string, runId: number) {
   if (!editingId.value || !result.databaseInfo || !savedConnectionConfigFingerprint.value) return;
   const fingerprint = connectionConfigFingerprint(config, sourceName);
-  if (fingerprint !== savedConnectionConfigFingerprint.value) return;
+  let currentDraftFingerprint: string;
   try {
-    await store.updateConnectionDatabaseInfo(editingId.value, result.databaseInfo);
+    const currentDraft = connectionConfigForSubmit(editingId.value, form.value.name);
+    currentDraftFingerprint = connectionConfigFingerprint(currentDraft, form.value.name);
+  } catch {
+    return;
+  }
+  // An in-flight test must not publish its saved snapshot after the user edits,
+  // switches, or closes the draft that initiated it.
+  if (
+    !canPersistConnectionTestResult({
+      testConfigId: config.id,
+      activeDraftId: editingId.value,
+      testRunId: runId,
+      activeTestRunId: testRunId,
+      submittedFingerprint: fingerprint,
+      savedFingerprint: savedConnectionConfigFingerprint.value,
+      currentDraftFingerprint,
+    })
+  ) {
+    return;
+  }
+  const persistedDraftId = editingId.value;
+  try {
+    await store.updateConnectionDatabaseInfo(persistedDraftId, result.databaseInfo);
+    if (runId !== testRunId || editingId.value !== persistedDraftId) return;
     savedDatabaseInfo.value = { ...result.databaseInfo };
     savedDatabaseInfoFingerprint.value = fingerprint;
   } catch {
@@ -1457,12 +1507,16 @@ function applyProfile(val: string, preserveConnectionFields = false) {
   const profile = driverProfiles[val];
   if (!profile) return;
 
+  const previousDatabaseType = form.value.db_type;
   selectedType.value = val;
   form.value.db_type = profile.type;
   form.value.driver_profile = val;
   form.value.driver_label = isCustomCompatibleProfile() ? customDriverName.value.trim() || profile.label : profile.label;
   if (profile.type !== "sqlserver") {
     form.value.external_config = undefined;
+  }
+  if (profile.type !== "elasticsearch" || previousDatabaseType !== "elasticsearch") {
+    resetElasticsearchProxyFields();
   }
 
   if (!preserveConnectionFields) {
@@ -1628,6 +1682,7 @@ watch(
       } else {
         resetInfluxDbFields();
       }
+      resetElasticsearchProxyFields(config.db_type === "elasticsearch" ? config.external_config : undefined);
       resetHiveKerberosFields(config.db_type === "hive" ? config : undefined);
       h2ConnectionMode.value = h2ConnectionModeForConfig(config);
       customColorInput.value = config.color || "";
@@ -1664,6 +1719,7 @@ watch(
       resetMqFields();
       resetNacosFields();
       resetInfluxDbFields();
+      resetElasticsearchProxyFields();
       resetHiveKerberosFields();
       oceanbaseSubMode.value = "mysql";
       h2ConnectionMode.value = "file";
@@ -2046,11 +2102,7 @@ const mysqlClientKeyPath = computed({
 const nativePostgresTlsDatabaseTypes = new Set<DatabaseType>(["postgres", "redshift", "gaussdb", "kwdb", "opengauss"]);
 const supportsPostgresTlsOptions = computed(() => nativePostgresTlsDatabaseTypes.has(form.value.db_type));
 const postgresTlsMode = computed({
-  get: () => {
-    const value = normalizePostgresSslMode(getUrlParam(form.value.url_params, "sslmode"));
-    if (value) return value;
-    return form.value.ssl ? "require" : "disable";
-  },
+  get: () => postgresTlsModeForForm(getUrlParam(form.value.url_params, "sslmode"), form.value.ssl),
   set: (value: string) => {
     form.value.ssl = value !== "disable";
     form.value.url_params = setUrlParam(form.value.url_params, "sslmode", value);
@@ -2361,7 +2413,7 @@ async function testConnection() {
       successfulConfig = connectionConfigForSubmit(config.id, config.name);
     }
     applySuccessfulConnectionTest(result, successfulConfig, submittedSourceName);
-    void persistSuccessfulConnectionTest(result, successfulConfig, submittedSourceName);
+    void persistSuccessfulConnectionTest(result, successfulConfig, submittedSourceName, runId);
     clearEditedConnectionErrorAfterSuccessfulTest();
   } catch (e: any) {
     if (runId !== testRunId) return;
@@ -2375,7 +2427,7 @@ async function testConnection() {
     }
     if (fallback) {
       applySuccessfulConnectionTest(fallback.result, fallback.config, submittedSourceName);
-      void persistSuccessfulConnectionTest(fallback.result, fallback.config, submittedSourceName);
+      void persistSuccessfulConnectionTest(fallback.result, fallback.config, submittedSourceName, runId);
       clearEditedConnectionErrorAfterSuccessfulTest();
     } else {
       clearTestedConnectionInfo();
@@ -2637,6 +2689,8 @@ function connectionConfigForSubmit(id: string, generatedName = ""): ConnectionCo
       config.password = config.password.trim();
       config.database = config.database?.trim() || undefined;
     }
+  } else if (config.db_type === "elasticsearch") {
+    config.external_config = buildElasticsearchExternalConfig(elasticsearchConnectionMode.value, elasticsearchKibanaBasePath.value);
   } else if (config.db_type === "sqlserver") {
     config.external_config = sqlServerPortExplicitFromConfig(config) ? { portExplicit: true } : undefined;
   } else {
@@ -2920,22 +2974,6 @@ function applyMysqlTlsMode(params: string | undefined, mode: string): string {
   }
   next = setUrlParam(next, "verify_ca", "true");
   return setUrlParam(next, "verify_identity", "true");
-}
-
-function normalizePostgresSslMode(value: string): string {
-  switch (value.trim().toLowerCase()) {
-    case "disable":
-    case "prefer":
-    case "require":
-    case "verify-ca":
-    case "verify-full":
-      return value.trim().toLowerCase();
-    case "verify_identity":
-    case "verify-identity":
-      return "verify-full";
-    default:
-      return "";
-  }
 }
 
 function normalizeRedisSentinelNodes(value: string): string {
@@ -5082,10 +5120,39 @@ function openExternalUrl(url: string) {
 
                 <!-- MySQL / PostgreSQL: host, port, user, password, database -->
                 <template v-else>
+                  <div v-if="form.db_type === 'elasticsearch'" class="grid grid-cols-4 items-center gap-4">
+                    <Label :class="connectionLabelSmallClass">{{ t("connection.mode") }}</Label>
+                    <div class="col-span-3 grid h-8 grid-cols-2 overflow-hidden rounded-md border border-input bg-muted/30 p-0.5">
+                      <button
+                        type="button"
+                        class="h-7 rounded-sm px-3 text-sm transition-colors"
+                        :class="elasticsearchConnectionMode === 'direct' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+                        :aria-pressed="elasticsearchConnectionMode === 'direct'"
+                        @click="switchElasticsearchConnectionMode('direct')"
+                      >
+                        {{ t("connection.elasticsearchDirectMode") }}
+                      </button>
+                      <button
+                        type="button"
+                        class="h-7 rounded-sm px-3 text-sm transition-colors"
+                        :class="elasticsearchConnectionMode === 'kibana' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+                        :aria-pressed="elasticsearchConnectionMode === 'kibana'"
+                        @click="switchElasticsearchConnectionMode('kibana')"
+                      >
+                        {{ t("connection.elasticsearchKibanaProxyMode") }}
+                      </button>
+                    </div>
+                  </div>
+
                   <div class="grid grid-cols-4 items-center gap-4">
-                    <Label :class="connectionLabelClass">{{ t("connection.host") }}</Label>
+                    <Label :class="connectionLabelClass">{{ form.db_type === "elasticsearch" && elasticsearchConnectionMode === "kibana" ? t("connection.elasticsearchKibanaHost") : t("connection.host") }}</Label>
                     <Input v-model="form.host" class="col-span-2" />
                     <Input v-model.number="form.port" type="number" class="col-span-1" @input="markSqlServerPortExplicit" />
+                  </div>
+
+                  <div v-if="form.db_type === 'elasticsearch' && elasticsearchConnectionMode === 'kibana'" class="grid grid-cols-4 items-center gap-4">
+                    <Label :class="connectionLabelSmallClass">{{ t("connection.elasticsearchKibanaBasePath") }}</Label>
+                    <Input v-model="elasticsearchKibanaBasePath" class="col-span-3" placeholder="/kibana/s/default" @input="resetTestState" />
                   </div>
 
                   <div v-if="form.driver_profile === 'gbase8s'" class="grid grid-cols-4 items-center gap-4">

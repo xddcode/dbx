@@ -211,6 +211,7 @@ pub async fn list_objects(
                 name: table.name,
                 object_type: table.table_type,
                 schema: Some(database.clone()),
+                valid: None,
                 signature: None,
                 comment: table.comment,
                 created_at: None,
@@ -297,6 +298,17 @@ pub async fn get_columns(
             .await;
     }
     dbx_core::schema::get_columns_core(&state, &connection_id, &database, &schema, &table).await
+}
+
+#[tauri::command]
+pub async fn get_sqlserver_column_metadata(
+    state: State<'_, Arc<AppState>>,
+    connection_id: String,
+    database: String,
+    schema: String,
+    table: String,
+) -> Result<Vec<db::sqlserver::SqlServerColumnMetadata>, String> {
+    dbx_core::schema::get_sqlserver_column_metadata_core(&state, &connection_id, &database, &schema, &table).await
 }
 
 #[tauri::command]

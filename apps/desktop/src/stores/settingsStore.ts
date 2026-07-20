@@ -38,7 +38,7 @@ export type DesktopIconTheme = "default" | "black";
 
 export type InterfaceLayout = "separated" | "classic";
 
-export type UpdateDownloadSource = "official" | "cnb" | "atomgit";
+export type UpdateDownloadSource = "official" | "cnb";
 export type SqlSemanticDiagnosticsMode = "auto" | "enabled" | "disabled";
 export type OpenTabsRestoreMode = "all" | "pinned" | "none";
 
@@ -162,7 +162,7 @@ export const AI_PROVIDER_PRESETS: Record<AiProvider, AiProviderPreset> = {
     model: "",
     apiStyle: "completions",
     authMethod: "bearer",
-    requiresApiKey: true,
+    requiresApiKey: false,
   },
   "claude-code-cli": {
     label: "Claude Code CLI",
@@ -191,7 +191,7 @@ export const AI_PROVIDER_PRESETS: Record<AiProvider, AiProviderPreset> = {
     model: "",
     apiStyle: "completions",
     authMethod: "bearer",
-    requiresApiKey: true,
+    requiresApiKey: false,
   },
 };
 
@@ -626,7 +626,8 @@ function normalizeTableFontSize(value: unknown): number {
 }
 
 function normalizeUpdateDownloadSource(value: unknown): UpdateDownloadSource {
-  if (value === "atomgit") return "atomgit";
+  // Preserve the intent of users who previously selected the mainland-China mirror.
+  if (value === "atomgit") return "cnb";
   return value === "cnb" ? "cnb" : DEFAULT_EDITOR_SETTINGS.updateDownloadSource;
 }
 
@@ -887,7 +888,12 @@ export const useSettingsStore = defineStore("settings", () => {
     if (isEditorSettingsLoaded.value) return;
     const saved = await api.loadEditorSettings().catch(() => null);
     if (saved && typeof saved === "object" && !Array.isArray(saved)) {
-      editorSettings.value = normalizeEditorSettings(saved as Partial<EditorSettings>);
+      const normalized = normalizeEditorSettings(saved as Partial<EditorSettings>);
+      editorSettings.value = normalized;
+      if ((saved as { updateDownloadSource?: unknown }).updateDownloadSource === "atomgit") {
+        // Persist the channel migration so the removed source cannot reappear in older settings data.
+        await api.saveEditorSettings(normalized).catch(() => {});
+      }
       isEditorSettingsLoaded.value = true;
       return;
     }
@@ -944,7 +950,8 @@ export const useSettingsStore = defineStore("settings", () => {
       await migrateToMultiConfig();
     }
 
-    // 同步活跃状态到默认配置
+    // 重置 activeModel 到默认配置是有意行为——activeModel 是本次运行 (run-scoped) 的末次使用选择，
+    // 应用启动和配置同步下载 (reloadAiConfigs) 两条路径均需丢弃会话内手动切换的模型、回到默认。
     const defaultConfig = aiConfigs.value.find((c) => c.isDefault) || aiConfigs.value[0];
     if (defaultConfig) {
       activeModel.value = { configId: defaultConfig.id, modelId: defaultConfig.model };
@@ -956,14 +963,7 @@ export const useSettingsStore = defineStore("settings", () => {
   async function reloadAiConfigs(): Promise<void> {
     isAiConfigLoaded.value = false;
     await initAiConfigs();
-    // If the active config was deleted, fall back to the default
-    if (activeModel.value && !aiConfigs.value.find((c) => c.id === activeModel.value!.configId)) {
-      if (aiConfigs.value.length > 0) {
-        activeModel.value = { configId: aiConfigs.value[0].id, modelId: aiConfigs.value[0].model };
-      } else {
-        activeModel.value = null;
-      }
-    }
+    if (aiConfigs.value.length === 0) activeModel.value = null;
   }
 
   async function migrateToMultiConfig(): Promise<void> {
@@ -1029,6 +1029,11 @@ export const useSettingsStore = defineStore("settings", () => {
     aiConfigs.value.forEach((c) => {
       c.isDefault = c.id === id;
     });
+    const config = aiConfigs.value.find((c) => c.id === id);
+    if (config) {
+      // 修改默认配置时丢弃用户手动选择的模型，回到新默认——放在 await 之后确保后端持久化成功才执行
+      activeModel.value = { configId: config.id, modelId: config.model };
+    }
   }
 
   function updateActiveModel(model: { configId: string; modelId: string }) {

@@ -40,6 +40,11 @@ test("remaining form dialogs render once at tree level and keep confirm/cancel b
   assert.match(dialogHost, /@click="confirmPasteTable"/);
 });
 
+test("dialog controller routing preserves shared open-flag refs instead of spreading them", () => {
+  assert.match(runtimeHost, /createRoutedSidebarDialogController\(/);
+  assert.doesNotMatch(runtimeHost, /reactive<Record<string, any>>\(\{ \.\.\.controller/);
+});
+
 test("saved object dialogs refresh the immutable active target", () => {
   assert.match(connectionTree, /<SidebarObjectSourceDialog[\s\S]*?@saved="refreshSidebarActionTarget"/);
   assert.match(connectionTree, /<InstallExtensionDialog[\s\S]*?@close="refreshSidebarActionTarget"/);

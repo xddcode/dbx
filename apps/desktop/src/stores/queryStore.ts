@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { uuid } from "@/lib/common/utils";
-import { markRaw, ref, watch, computed } from "vue";
+import { computed, markRaw, onScopeDispose, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { ConnectionConfig, DatabaseType, ObjectBrowserViewport, QueryResult, QueryTab, TableInfoTab, TableStructureEditorTarget } from "@/types/database";
 import { orderPinnedFirst } from "@/lib/app/pinnedItems";
@@ -40,7 +40,7 @@ import { loadTableMetadata } from "@/lib/metadata/tableMetadataCache";
 import { buildTableSelectSql, quoteTableDataIdentifier } from "@/lib/table/tableSelectSql";
 import { connectionQueryExecutionSchema, effectiveDatabaseTypeForConnection, metadataSchemaForConnection } from "@/lib/database/jdbcDialect";
 import { frontendQueryTimeoutSecsForSql, queryTimeoutSecsForConnection } from "@/lib/sql/queryTimeout";
-import { queryResultSourceLabel } from "@/lib/sql/queryResultSource";
+import { queryResultNameFromPreamble, queryResultSourceLabel } from "@/lib/sql/queryResultSource";
 import { sortDataGridRowIndexes, type DataGridSortDirection } from "@/lib/dataGrid/dataGridSort";
 import { normalizeResultPageSize } from "@/lib/dataGrid/paginationPageSize";
 import { executableStatementRanges, splitSqlStatementRanges } from "@/lib/sql/sqlStatementRanges";
@@ -57,6 +57,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { useSavedSqlStore } from "@/stores/savedSqlStore";
 import { recordQueryCancellationLatency, resourceLifecycleDiagnostics } from "@/lib/diagnostics/resourceLifecycleDiagnostics";
 import { appendDebugLog } from "@/lib/backend/debugLog";
+import { formatError } from "@/lib/backend/errorUtils";
 import { createSavedSqlEditorPosition, initSavedSqlEditorPositions, restoreSavedSqlEditorPosition, saveSavedSqlEditorPosition } from "@/lib/app/savedSqlEditorPosition";
 import { ensureSqlExtension } from "@/lib/savedSql/savedSqlFileName";
 import { safeLocalStorageGet, safeLocalStorageRemove } from "@/lib/backend/safeStorage";
@@ -155,6 +156,8 @@ function annotateQueryResultSources(results: QueryResult[], sql: string, databas
     const statement = statements[sourceIndex];
     if (!statement) continue;
     annotateQueryResultSource(result, statement.sql, database, databaseType, sourceOffset === undefined ? undefined : { from: sourceOffset + statement.from, to: sourceOffset + statement.to });
+    const customName = queryResultNameFromPreamble(sql.slice(statement.hitFrom, statement.from));
+    if (customName) result.sourceLabel = customName;
   }
   return results;
 }
@@ -998,6 +1001,11 @@ export const useQueryStore = defineStore("query", () => {
     },
     { flush: "post" },
   );
+
+  onScopeDispose(() => {
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = null;
+  });
 
   // Immediately flush any pending debounced persist so the on-disk content
   // reflects the latest in-memory tabs without waiting for the 300ms debounce.
@@ -1863,7 +1871,6 @@ export const useQueryStore = defineStore("query", () => {
     const tableMeta = tableMetaForDataTab(tab);
     if (!tableMeta?.tableName) return false;
 
-    const settingsStore = useSettingsStore();
     const connStore = useConnectionStore();
     const conn = connStore.getConfig(tab.connectionId);
     const effectiveDbType = effectiveDatabaseTypeForConnection(conn);
@@ -1871,7 +1878,7 @@ export const useQueryStore = defineStore("query", () => {
     const primaryKeys = tab.tableMeta ? tab.tableMeta.primaryKeys : tableMeta.primaryKeys;
     const sortOrder = tab.resultSortColumn && tab.resultSortDirection ? `${quoteTableDataIdentifier(effectiveDbType, tab.resultSortColumn, identifierQuote)} ${tab.resultSortDirection.toUpperCase()}` : undefined;
     const orderBy = tab.orderByInput?.trim() || sortOrder;
-    const limit = tab.resultPageLimit ?? settingsStore.editorSettings.pageSize ?? tableOpenPageLimit();
+    const limit = tab.resultPageLimit ?? tableOpenPageLimit();
     const offset = tab.resultPageOffset ?? 0;
     const refreshPreparationId = uuid();
 
@@ -2233,6 +2240,11 @@ export const useQueryStore = defineStore("query", () => {
     if (tab) {
       tab.tableMeta = meta;
       tab.tableMetaUpdatedAt = Date.now();
+      // 只有真实元数据（columns 非空）落地才结束行标识等待；多处调用方会先写
+      // columns/primaryKeys 为空的占位身份（如 useNavigationTargets），不得
+      // 借此提前解除编辑门控。失败/中止路径不清除——标签页保持只读是安全
+      // 兜底，刷新或重开表会重新加载元数据恢复
+      if (meta.columns.length > 0) tab.tableMetaPending = false;
     }
   }
 
@@ -2925,7 +2937,7 @@ export const useQueryStore = defineStore("query", () => {
         let mongoEditTarget: QueryTab["mongoEditTarget"] | undefined;
 
         for (const parsedCommand of mongoCommands) {
-          const mongoCommand = parsedCommand.command;
+          let mongoCommand = parsedCommand.command;
           const sourceStatement = parsedCommand.text;
           const sourceRange = options?.sourceOffset === undefined ? undefined : { from: options.sourceOffset + parsedCommand.from, to: options.sourceOffset + parsedCommand.to };
           const commandStartedAt = performance.now();
@@ -2937,6 +2949,9 @@ export const useQueryStore = defineStore("query", () => {
             return annotated;
           };
           try {
+            // The frontend parser remains responsible for editor ranges, while
+            // dbx-core is authoritative for command semantics at execution time.
+            mongoCommand = await api.mongoParseShellCommand(sourceStatement);
             switch (mongoCommand.kind) {
               case "find": {
                 queryExecutionLog("info", "mongo-find:start", { traceId, collection: mongoCommand.collection, database: currentDatabase });
@@ -3592,7 +3607,8 @@ export const useQueryStore = defineStore("query", () => {
         const current = tabs.value.find((t) => t.id === id);
         if (current?.explainExecutionId === executionId) {
           current.explainPlan = undefined;
-          current.explainError = String(e?.message || e);
+          // Backend rejections contain the real ORA/Agent diagnostic; only successful empty responses use the generic empty-plan message.
+          current.explainError = formatError(e);
         }
       } finally {
         const current = tabs.value.find((t) => t.id === id);
@@ -3816,6 +3832,9 @@ export const useQueryStore = defineStore("query", () => {
     const executionId = tab.executionId;
     if (!executionId) return false;
     tab.isCancelling = true;
+    // 单调递增、不随取消结果回退：导航流程据此判断"执行期间用户请求过停止"
+    // （isCancelling 在取消失败或查询先完成时会被清掉，无法承担这个语义）
+    tab.cancelRequestCount = (tab.cancelRequestCount ?? 0) + 1;
     const cancellationStartedAt = performance.now();
     try {
       const canceled = await withCancelQueryTimeout(api.cancelQuery(executionId));
@@ -3999,7 +4018,17 @@ export const useQueryStore = defineStore("query", () => {
     tab.querySourceColumns = snapshot.querySourceColumns;
     tab.queryEditabilityReason = snapshot.queryEditabilityReason;
     tab.mongoEditTarget = snapshot.mongoEditTarget;
-    tab.tableMeta = snapshot.tableMeta;
+    // Data tab 快照可能是延迟元数据期间落盘的空列占位身份：不得用它回滚
+    // 之后已落地的真实元数据（否则 pending 已清除而行标识又变未知，编辑
+    // 门控失效）；若恢复后确实没有真实列，重新挂起编辑门控
+    if (tab.tableMeta?.columns.length && !snapshot.tableMeta?.columns.length) {
+      // 保留当前真实元数据，忽略快照中的占位身份
+    } else {
+      tab.tableMeta = snapshot.tableMeta;
+    }
+    if (tab.mode === "data" && !tab.tableMeta?.columns.length) {
+      tab.tableMetaPending = true;
+    }
     tab.resultPageSql = snapshot.resultPageSql;
     tab.resultPageLimit = snapshot.resultPageLimit;
     tab.resultPageOffset = snapshot.resultPageOffset;

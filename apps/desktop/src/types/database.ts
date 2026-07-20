@@ -377,12 +377,13 @@ export interface TableInfo {
   parent_name?: string | null;
 }
 
-export type DatabaseObjectType = "TABLE" | "VIEW" | "MATERIALIZED_VIEW" | "PROCEDURE" | "FUNCTION" | "SEQUENCE" | "PACKAGE" | "PACKAGE_BODY";
+export type DatabaseObjectType = "TABLE" | "VIEW" | "MATERIALIZED_VIEW" | "PROCEDURE" | "FUNCTION" | "TRIGGER" | "SEQUENCE" | "PACKAGE" | "PACKAGE_BODY" | "TYPE" | "TYPE_BODY";
 
 export interface ObjectInfo {
   name: string;
   object_type: DatabaseObjectType | string;
   schema?: string | null;
+  valid?: boolean | null;
   signature?: string | null;
   comment?: string | null;
   created_at?: string | null;
@@ -398,7 +399,7 @@ export interface ObjectStatistics {
   total_bytes?: number | null;
 }
 
-export type ObjectSourceKind = "VIEW" | "MATERIALIZED_VIEW" | "PROCEDURE" | "FUNCTION" | "SEQUENCE" | "PACKAGE" | "PACKAGE_BODY";
+export type ObjectSourceKind = "VIEW" | "MATERIALIZED_VIEW" | "PROCEDURE" | "FUNCTION" | "TRIGGER" | "SEQUENCE" | "PACKAGE" | "PACKAGE_BODY" | "TYPE" | "TYPE_BODY";
 
 export interface ObjectSource {
   name: string;
@@ -422,6 +423,13 @@ export interface ColumnInfo {
   enum_values?: string[] | null;
   character_set?: string | null;
   collation?: string | null;
+}
+
+export interface SqlServerColumnMetadata extends ColumnInfo {
+  is_identity: boolean;
+  is_computed: boolean;
+  is_hidden: boolean;
+  generated_always_type: number;
 }
 
 export interface IndexInfo {
@@ -616,6 +624,8 @@ export type TreeNodeType =
   | "materialized_view"
   | "procedure"
   | "function"
+  | "type"
+  | "type-body"
   | "sequence"
   | "package"
   | "package-body"
@@ -628,6 +638,7 @@ export type TreeNodeType =
   | "group-materialized-views"
   | "group-procedures"
   | "group-functions"
+  | "group-types"
   | "group-sequences"
   | "group-packages"
   | "group-partitions"
@@ -697,6 +708,7 @@ export interface TreeNode {
   signature?: string;
   tableType?: string;
   comment?: string | null;
+  valid?: boolean | null;
   objectCount?: number;
   loadedKeyCount?: number;
   totalKeyCount?: number;
@@ -846,6 +858,11 @@ export interface QueryTab {
     primaryKeys: string[];
   };
   tableMetaUpdatedAt?: number;
+  /** 冷缓存打开表数据时元数据仍在途：行标识未知，编辑/保存必须等待其落地 */
+  tableMetaPending?: boolean;
+  /** 取消请求单调计数：isCancelling 是瞬态的（取消失败/查询先完成会被清），
+   * 需要跨越 executeTabSql 生命周期判断"执行期间用户是否请求过停止"时比对它 */
+  cancelRequestCount?: number;
   tableInfoTab?: TableInfoTab;
   queryAnalysis?: {
     catalog?: string;

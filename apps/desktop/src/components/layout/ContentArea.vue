@@ -207,6 +207,7 @@ const dataGridSearchMode = computed(() => settingsStore.editorSettings.dataGridS
 const columnWidthDensity = computed(() => settingsStore.editorSettings.columnWidthDensity);
 const tableFontSize = computed(() => settingsStore.editorSettings.tableFontSize);
 const redisKeyBrowserRef = ref<SearchableBrowserHandle>();
+const documentBrowserRef = ref<SearchableBrowserHandle>();
 
 const etcdKeyBrowserRef = ref<SearchableBrowserHandle>();
 const zookeeperKeyBrowserRef = ref<SearchableBrowserHandle>();
@@ -680,6 +681,7 @@ function onHandleCloseColumnPanel() {
 }
 
 function focusSearch(): boolean {
+  if (props.activeTab.mode === "mongo") return documentBrowserRef.value?.focusSearch() ?? false;
   if (props.activeTab.mode === "redis") return redisKeyBrowserRef.value?.focusSearch() ?? false;
   if (props.activeTab.mode === "etcd") return etcdKeyBrowserRef.value?.focusSearch() ?? false;
   if (props.activeTab.mode === "zookeeper") return zookeeperKeyBrowserRef.value?.focusSearch() ?? false;
@@ -695,6 +697,8 @@ function refreshQueryEditorCompletionCache(): boolean {
 }
 
 function refreshData(): boolean {
+  // Reuse ObjectBrowser's reload path so schema reloads and stale object-response guards stay intact.
+  if (props.activeTab.mode === "objects") return objectBrowserRef.value?.refresh?.() ?? false;
   if (props.activeTab.mode === "etcd") return etcdKeyBrowserRef.value?.refresh?.() ?? false;
   if (props.activeTab.mode === "zookeeper") return zookeeperKeyBrowserRef.value?.refresh?.() ?? false;
   // Restored data tabs intentionally omit row data, so refresh must work before DataGrid mounts.
@@ -1473,7 +1477,7 @@ defineExpose({ focusSearch, refreshData, refreshQueryEditorCompletionCache, hand
           :initial-order-by-input="activeTab.orderByInput"
           :sql="activeTab.sql"
           :loading="activeTab.isExecuting"
-          :editable="isTableDataEditable(activeEffectiveDatabaseType, activeTableMeta?.primaryKeys ?? [], activeTableMeta?.tableType)"
+          :editable="!activeTab.tableMetaPending && isTableDataEditable(activeEffectiveDatabaseType, activeTableMeta?.primaryKeys ?? [], activeTableMeta?.tableType)"
           context="table-data"
           :initial-where-input="activeTab.whereInput"
           :database-type="activeEffectiveDatabaseType"
@@ -1547,7 +1551,7 @@ defineExpose({ focusSearch, refreshData, refreshQueryEditorCompletionCache, hand
     <!-- Document mode: MongoDB collections and Elasticsearch indices -->
     <template v-else-if="activeTab.mode === 'mongo'">
       <div class="flex-1 min-h-0">
-        <DocumentBrowser :key="activeTab.id" :connection-id="activeTab.connectionId" :database="activeTab.database" :collection="activeTab.sql" :database-type="activeEffectiveDatabaseType" />
+        <DocumentBrowser ref="documentBrowserRef" :key="activeTab.id" :connection-id="activeTab.connectionId" :database="activeTab.database" :collection="activeTab.sql" :database-type="activeEffectiveDatabaseType" />
       </div>
     </template>
 
