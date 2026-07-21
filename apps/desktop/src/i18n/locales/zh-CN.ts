@@ -4157,6 +4157,7 @@ export default withEnglishFallback({
     options: "选项",
     includeStructure: "表结构 (DDL)",
     dropTableIfExists: "导出前添加 DROP TABLE IF EXISTS",
+    omitAutoIncrement: "省略 AUTO_INCREMENT（用于全新安装的初始化脚本）",
     includeData: "表数据 (INSERT)",
     includeObjects: "视图 / 存储过程 / 函数 / 序列",
     databaseSelection: "选择数据库",

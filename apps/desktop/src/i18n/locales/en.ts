@@ -4167,6 +4167,7 @@ export default {
     options: "Options",
     includeStructure: "Table structure (DDL)",
     dropTableIfExists: "Add DROP TABLE IF EXISTS before DDL",
+    omitAutoIncrement: "Omit AUTO_INCREMENT (for fresh-install scripts)",
     includeData: "Table data (INSERT)",
     includeObjects: "Views / Procedures / Functions / Sequences",
     databaseSelection: "Databases",

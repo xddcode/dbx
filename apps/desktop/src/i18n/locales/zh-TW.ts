@@ -3749,6 +3749,7 @@ export default withEnglishFallback({
     options: "選項",
     includeStructure: "資料表結構 (DDL)",
     dropTableIfExists: "匯出前新增 DROP TABLE IF EXISTS",
+    omitAutoIncrement: "省略 AUTO_INCREMENT（用於全新安裝的初始化腳本）",
     includeData: "資料表資料 (INSERT)",
     includeObjects: "檢視 / 預存程序 / 函式 / 序列",
     databaseSelection: "選擇資料庫",

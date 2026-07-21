@@ -3932,6 +3932,7 @@ export default withEnglishFallback({
     options: "オプション",
     includeStructure: "テーブル構造 (DDL)",
     dropTableIfExists: "DDLの前にDROP TABLE IF EXISTSを追加",
+    omitAutoIncrement: "AUTO_INCREMENT を省略（新規インストール用スクリプト向け）",
     includeData: "テーブルデータ (INSERT)",
     includeObjects: "ビュー / プロシージャ / 関数 / シーケンス",
     databaseSelection: "データベース",
