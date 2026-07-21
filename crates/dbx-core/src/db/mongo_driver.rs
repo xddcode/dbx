@@ -1655,44 +1655,13 @@ fn parse_extended_json_value(obj: &serde_json::Map<String, serde_json::Value>) -
 
 fn parse_mongo_shell_date(value: &str) -> Option<DateTime> {
     let trimmed = value.trim();
-    if let Some(inner) = trimmed.strip_prefix("ISODate(").or_else(|| trimmed.strip_prefix("new Date(")) {
-        let inner = inner.strip_suffix(')')?.trim();
-        let quoted = inner
-            .strip_prefix('"')
-            .and_then(|value| value.strip_suffix('"'))
-            .or_else(|| inner.strip_prefix('\'').and_then(|value| value.strip_suffix('\'')))?;
-        return DateTime::parse_rfc3339_str(quoted).ok();
-    }
-    parse_legacy_mongo_date_display(trimmed)
-}
-
-fn parse_legacy_mongo_date_display(value: &str) -> Option<DateTime> {
-    let (date, time) = value.split_once(' ').or_else(|| value.split_once('T'))?;
-    if date.len() != 10 || time.len() < 8 || time.len() > 12 {
-        return None;
-    }
-    if !date
-        .chars()
-        .enumerate()
-        .all(|(index, ch)| matches!(index, 4 | 7) && ch == '-' || !matches!(index, 4 | 7) && ch.is_ascii_digit())
-    {
-        return None;
-    }
-    let (seconds, millis) = time.split_once('.').unwrap_or((time, "000"));
-    if seconds.len() != 8 || millis.is_empty() || millis.len() > 3 {
-        return None;
-    }
-    if !seconds
-        .chars()
-        .enumerate()
-        .all(|(index, ch)| matches!(index, 2 | 5) && ch == ':' || !matches!(index, 2 | 5) && ch.is_ascii_digit())
-    {
-        return None;
-    }
-    if !millis.chars().all(|ch| ch.is_ascii_digit()) {
-        return None;
-    }
-    DateTime::parse_rfc3339_str(format!("{date}T{seconds}.{millis:0<3}Z")).ok()
+    let inner = trimmed.strip_prefix("ISODate(").or_else(|| trimmed.strip_prefix("new Date("))?;
+    let inner = inner.strip_suffix(')')?.trim();
+    let quoted = inner
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .or_else(|| inner.strip_prefix('\'').and_then(|value| value.strip_suffix('\'')))?;
+    DateTime::parse_rfc3339_str(quoted).ok()
 }
 
 fn parse_extended_json_date(obj: &serde_json::Map<String, serde_json::Value>) -> Option<DateTime> {
@@ -2657,16 +2626,21 @@ mod tests {
     }
 
     #[test]
-    fn json_object_to_document_parses_legacy_date_display_strings() {
+    fn json_object_to_document_preserves_date_shaped_strings() {
         let value = serde_json::json!({
-            "created_at": "2025-08-14 02:25:43.718",
+            "$set": {
+                "create_time": "2025-04-01 19:46:03",
+                "nested": { "updated": "2025-08-14T02:25:43" },
+                "items": ["2025-08-14 02:25:43"],
+            }
         });
         let doc = json_object_to_document(&value).unwrap();
+        let set = doc.get_document("$set").unwrap();
 
-        assert!(matches!(
-            doc.get("created_at"),
-            Some(Bson::DateTime(value)) if value.timestamp_millis() == 1_755_138_343_718
-        ));
+        assert_eq!(set.get_str("create_time").unwrap(), "2025-04-01 19:46:03");
+        assert_eq!(set.get_document("nested").unwrap().get_str("updated").unwrap(), "2025-08-14T02:25:43");
+        assert_eq!(set.get_array("items").unwrap()[0].as_str().unwrap(), "2025-08-14 02:25:43");
+        assert!(is_update_operator_document(&doc));
     }
 
     #[test]
