@@ -3403,8 +3403,7 @@ function buildAliasCandidates(tableName: string): string[] {
 
   if (parts.length > 1) {
     const initials = parts.map((part) => part[0]).join("");
-    if (initials.length >= 2) candidates.push(initials.slice(0, 2));
-    if (initials.length >= 3) candidates.push(initials.slice(0, 3));
+    if (initials.length >= 2) candidates.push(initials);
     candidates.push(parts[0].slice(0, 2), parts[0].slice(0, 3));
   } else {
     const name = parts[0] ?? tableName.toLowerCase().replace(/[^a-z0-9]/g, "");
