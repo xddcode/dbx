@@ -6278,6 +6278,45 @@ mod ddl_tests {
     }
 
     #[test]
+    fn postgres_table_ddl_includes_partition_key_for_parent_only() {
+        for partition_key in [
+            "RANGE (created_at)",
+            "LIST (\"Tenant ID\")",
+            "HASH ((lower(code)))",
+            "RANGE (date_trunc('month'::text, created_at))",
+        ] {
+            let ddl = render_postgres_table_ddl_with_partition_key(
+                "public",
+                "events",
+                &[column("created_at", "timestamp without time zone")],
+                &[],
+                &[],
+                None,
+                Some(partition_key),
+            );
+
+            assert!(ddl.ends_with(&format!(") PARTITION BY {partition_key};\n")), "ddl: {ddl}");
+            assert!(!ddl.contains("PARTITION OF"));
+        }
+    }
+
+    #[test]
+    fn postgres_table_ddl_keeps_ordinary_table_unchanged() {
+        let ddl = render_postgres_table_ddl_with_partition_key(
+            "public",
+            "users",
+            &[column("id", "integer")],
+            &[],
+            &[],
+            None,
+            None,
+        );
+
+        assert!(ddl.ends_with(");\n"), "ddl: {ddl}");
+        assert!(!ddl.contains("PARTITION BY"));
+    }
+
+    #[test]
     fn postgres_table_ddl_keeps_composite_foreign_key_together() {
         let columns = vec![column("a", "integer"), column("b", "integer"), column("c", "integer")];
         let foreign_keys = vec![
@@ -6458,14 +6497,23 @@ pub fn opengauss_table_ddl_sql(schema: &str, table: &str) -> String {
 }
 
 pub async fn pg_ddl(pool: &deadpool_postgres::Pool, schema: &str, table: &str) -> Result<String, String> {
-    let (columns, indexes, fkeys, table_comment) = tokio::try_join!(
+    let (columns, indexes, fkeys, table_comment, partition_key) = tokio::try_join!(
         db::postgres::get_columns(pool, schema, table),
         db::postgres::list_indexes(pool, schema, table),
         db::postgres::list_foreign_keys(pool, schema, table),
         async { db::postgres::get_table_comment(pool, schema, table).await },
+        db::postgres::get_table_partition_key(pool, schema, table),
     )?;
 
-    Ok(render_postgres_table_ddl(schema, table, &columns, &indexes, &fkeys, table_comment.as_deref()))
+    Ok(render_postgres_table_ddl_with_partition_key(
+        schema,
+        table,
+        &columns,
+        &indexes,
+        &fkeys,
+        table_comment.as_deref(),
+        partition_key.as_deref(),
+    ))
 }
 
 pub fn render_postgres_table_ddl(
@@ -6475,6 +6523,18 @@ pub fn render_postgres_table_ddl(
     indexes: &[db::IndexInfo],
     fkeys: &[db::ForeignKeyInfo],
     table_comment: Option<&str>,
+) -> String {
+    render_postgres_table_ddl_with_partition_key(schema, table, columns, indexes, fkeys, table_comment, None)
+}
+
+fn render_postgres_table_ddl_with_partition_key(
+    schema: &str,
+    table: &str,
+    columns: &[db::ColumnInfo],
+    indexes: &[db::IndexInfo],
+    fkeys: &[db::ForeignKeyInfo],
+    table_comment: Option<&str>,
+    partition_key: Option<&str>,
 ) -> String {
     let table_name = format!("{}.{}", pg_ident(schema), pg_ident(table));
     let mut ddl = format!("CREATE TABLE {table_name} (\n");
@@ -6521,7 +6581,11 @@ pub fn render_postgres_table_ddl(
             ref_columns
         ));
     }
-    ddl.push_str("\n);\n");
+    if let Some(partition_key) = partition_key.filter(|key| !key.trim().is_empty()) {
+        ddl.push_str(&format!("\n) PARTITION BY {partition_key};\n"));
+    } else {
+        ddl.push_str("\n);\n");
+    }
 
     if let Some(comment) = table_comment.filter(|comment| !comment.trim().is_empty()) {
         ddl.push_str(&format!("\nCOMMENT ON TABLE {table_name} IS {};", sql_string(comment)));
