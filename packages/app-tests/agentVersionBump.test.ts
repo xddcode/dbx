@@ -101,6 +101,27 @@ test("native agent source changes still bump native module versions", () => {
   });
 });
 
+test("Kingbase native Go source changes bump the Kingbase module version", () => {
+  const fixture = moduleFixture([
+    "agents/drivers/kingbase",
+    "agents/drivers/kingbase/build.gradle",
+    "agents/drivers/kingbase-go",
+  ]);
+
+  const result = evaluateAgentVersionBump({
+    versions: {
+      kingbase: "0.1.34",
+    },
+    changedFiles: ["agents/drivers/kingbase-go/main.go"],
+    ...fixture,
+  });
+
+  assert.equal(result.changed, true);
+  assert.deepEqual(result.versions, {
+    kingbase: "0.1.35",
+  });
+});
+
 test("manual agent versions are preserved while other changed modules auto bump", () => {
   const fixture = moduleFixture([
     "agents/drivers/access",

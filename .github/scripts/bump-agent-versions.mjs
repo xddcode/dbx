@@ -38,10 +38,16 @@ function fileContainsCommonDependency(path, moduleExists, readModuleFile) {
   return /project\(\s*['"]:common['"]\s*\)/.test(source);
 }
 
+const nativeDriverDirectories = {
+  oracle: "oracle-go",
+  kingbase: "kingbase-go",
+};
+
 function resolveAgentModule(moduleName, { legacyStandaloneModules, moduleExists, readModuleFile }) {
   let checkDir = null;
-  if (moduleName === "oracle" && moduleExists("agents/drivers/oracle-go")) {
-    checkDir = "drivers/oracle-go";
+  const nativeDriverDirectory = nativeDriverDirectories[moduleName];
+  if (nativeDriverDirectory && moduleExists(`agents/drivers/${nativeDriverDirectory}`)) {
+    checkDir = `drivers/${nativeDriverDirectory}`;
   } else if (moduleExists(`agents/drivers/${moduleName}`)) {
     checkDir = `drivers/${moduleName}`;
   } else if (moduleExists(`agents/${moduleName}`) || moduleName === "common") {
