@@ -14,14 +14,18 @@ function bumpPatchVersion(version) {
 
 function pathChanged(changedFiles, pathPrefix) {
   const normalized = pathPrefix.endsWith("/") ? pathPrefix : `${pathPrefix}/`;
-  return changedFiles.some((file) => file === pathPrefix || file.startsWith(normalized));
+  return changedFiles.some((file) => (file === pathPrefix || file.startsWith(normalized)) && isAgentPublishRelevantFile(file));
+}
+
+export function isAgentPublishRelevantFile(file) {
+  return !file.endsWith("_test.go") && !file.includes("/src/test/") && !file.includes("/bench/");
 }
 
 function isCommonRuntimeChange(file) {
   return file === "agents/common/build.gradle" || file.startsWith("agents/common/src/main/");
 }
 
-function parseLegacyStandaloneProjects(buildGradle) {
+export function parseLegacyStandaloneProjects(buildGradle) {
   const match = /legacyStandaloneProjects\s*=\s*\[([^\]]*)\]/m.exec(buildGradle);
   if (!match) return new Set();
 
@@ -126,6 +130,16 @@ export function evaluateAgentVersionBump({
   }
 
   return { changed, versions: nextVersions, prevVersions, logs };
+}
+
+export function getAgentVersionChanges(previousVersions, nextVersions) {
+  return Object.keys(nextVersions)
+    .filter((moduleName) => nextVersions[moduleName] !== previousVersions[moduleName])
+    .map((moduleName) => ({
+      moduleName,
+      previousVersion: previousVersions[moduleName] ?? null,
+      nextVersion: nextVersions[moduleName],
+    }));
 }
 
 function git(args) {

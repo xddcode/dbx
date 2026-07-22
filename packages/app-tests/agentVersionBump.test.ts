@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "vitest";
 
-const { evaluateAgentVersionBump } = await importScript(".github/scripts/bump-agent-versions.mjs");
+const { evaluateAgentVersionBump, getAgentVersionChanges } = await importScript(".github/scripts/bump-agent-versions.mjs");
 
 function importScript(path: string): Promise<Record<string, any>> {
   const source = readFileSync(resolve(path), "utf8").replace(/^#!.*\r?\n/, "");
@@ -101,6 +101,31 @@ test("native agent source changes still bump native module versions", () => {
   });
 });
 
+test("native agent tests and benchmarks do not bump module versions", () => {
+  const fixture = moduleFixture([
+    "agents/drivers/kingbase-go",
+    "agents/drivers/xugu",
+  ]);
+
+  const result = evaluateAgentVersionBump({
+    versions: {
+      kingbase: "0.1.34",
+      xugu: "0.1.21",
+    },
+    changedFiles: [
+      "agents/drivers/kingbase-go/main_test.go",
+      "agents/drivers/xugu/bench/compare.go",
+    ],
+    ...fixture,
+  });
+
+  assert.equal(result.changed, false);
+  assert.deepEqual(result.versions, {
+    kingbase: "0.1.34",
+    xugu: "0.1.21",
+  });
+});
+
 test("Kingbase native Go source changes bump the Kingbase module version", () => {
   const fixture = moduleFixture([
     "agents/drivers/kingbase",
@@ -120,6 +145,9 @@ test("Kingbase native Go source changes bump the Kingbase module version", () =>
   assert.deepEqual(result.versions, {
     kingbase: "0.1.35",
   });
+  assert.deepEqual(getAgentVersionChanges(result.prevVersions, result.versions), [
+    { moduleName: "kingbase", previousVersion: "0.1.34", nextVersion: "0.1.35" },
+  ]);
 });
 
 test("manual agent versions are preserved while other changed modules auto bump", () => {
