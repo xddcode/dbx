@@ -4343,8 +4343,8 @@ function openExternalUrl(url: string) {
       </DialogHeader>
 
       <template v-if="dialogStep === 'select'">
-        <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
-          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex min-h-0 flex-1 flex-col gap-4">
+          <div class="flex flex-col gap-3 p-0.5 sm:flex-row sm:items-center sm:justify-between">
             <div class="flex items-center gap-2">
               <div class="flex shrink-0 rounded-lg border bg-muted/40 p-0.5">
                 <Button type="button" size="icon-sm" :variant="dbPickerView === 'icon' ? 'secondary' : 'ghost'" :title="t('connection.iconView')" :aria-label="t('connection.iconView')" @click="dbPickerView = 'icon'">
@@ -4380,7 +4380,7 @@ function openExternalUrl(url: string) {
               </button>
             </nav>
 
-            <div class="min-w-0 flex-1 space-y-5 overflow-y-auto pr-2">
+            <div class="min-w-0 flex-1 space-y-5 overflow-y-auto p-0.5 pr-2">
               <div v-if="isDbSearchActive" class="text-sm font-medium">{{ t("connection.searchResults") }}</div>
 
               <section v-for="category in visibleDbCategories" :key="category.key" class="space-y-2">
