@@ -240,26 +240,31 @@ export function resolveDataGridPaintTheme(options: { getVar: (name: string) => s
   const primary = cssVarColor(getVar, "--primary", isDark ? "rgb(208, 208, 214)" : "rgb(23, 23, 23)");
   const destructive = cssVarColor(getVar, "--destructive", isDark ? "rgb(243, 98, 95)" : "rgb(231, 0, 11)");
   const accent = cssVarColor(getVar, "--accent", isDark ? "rgb(46, 47, 51)" : "rgb(245, 245, 245)");
-  const activeSurface = isDark ? "rgb(64, 64, 64)" : "rgb(232, 232, 232)";
+  const success = cssVarColor(getVar, "--success", isDark ? "rgb(74, 222, 128)" : "rgb(22, 163, 74)");
+  const warning = cssVarColor(getVar, "--warning", isDark ? "rgb(251, 191, 36)" : "rgb(217, 119, 6)");
+  const successBg = paintToken(getVar, "--success-bg", isDark ? DATA_GRID_DARK_ROW_NUMBER_NEW_BG : DATA_GRID_LIGHT_ROW_NUMBER_NEW_BG);
+  const warningBg = paintToken(getVar, "--warning-bg", isDark ? DATA_GRID_DARK_ROW_NUMBER_EDITED_BG : DATA_GRID_LIGHT_ROW_NUMBER_EDITED_BG);
+  const destructiveBg = paintToken(getVar, "--color-error-bg", isDark ? DATA_GRID_DARK_ROW_NUMBER_DELETED_BG : DATA_GRID_LIGHT_ROW_NUMBER_DELETED_BG);
+  const activeSurface = paintToken(getVar, "--muted", isDark ? "rgb(64, 64, 64)" : "rgb(232, 232, 232)");
   const rowMuted = isDark ? DATA_GRID_DARK_STRIPED_ROW_BG : DATA_GRID_LIGHT_STRIPED_ROW_BG;
-  const rowNew = isDark ? "rgb(51, 51, 55)" : "rgb(243, 243, 243)";
-  const rowDeleted = isDark ? "rgb(55, 31, 32)" : "rgb(255, 244, 244)";
+  const rowNew = paintToken(getVar, "--muted", isDark ? "rgb(51, 51, 55)" : "rgb(243, 243, 243)");
+  const rowDeleted = destructiveBg;
   const cellActive = activeSurface;
-  const cellDirty = isDark ? "rgb(94, 75, 26)" : "rgb(255, 248, 230)";
-  const cellSelected = isDark ? "rgb(66, 67, 70)" : "rgb(226, 226, 226)";
-  const cellSelectedDirty = isDark ? "rgb(94, 75, 26)" : "rgb(244, 229, 186)";
-  const cellSelectedBorder = isDark ? "rgb(170, 170, 175)" : "rgb(90, 90, 90)";
-  const cellSelectedSingle = isDark ? "rgb(17, 24, 39)" : "rgb(209, 213, 219)";
+  const cellDirty = warningBg;
+  const cellSelected = paintToken(getVar, "--accent", isDark ? "rgb(66, 67, 70)" : "rgb(226, 226, 226)");
+  const cellSelectedDirty = warningBg;
+  const cellSelectedBorder = paintToken(getVar, "--border", isDark ? "rgb(170, 170, 175)" : "rgb(90, 90, 90)");
+  const cellSelectedSingle = paintToken(getVar, "--muted", isDark ? "rgb(17, 24, 39)" : "rgb(209, 213, 219)");
   const cellHover = accent;
-  const cellSearch = isDark ? DATA_GRID_DARK_SEARCH_COLORS.match : "rgb(253, 245, 184)";
-  const cellCurrentSearch = isDark ? DATA_GRID_DARK_SEARCH_COLORS.current : "rgba(253, 224, 71, 0.52)";
-  const cellCurrentSearchBorder = isDark ? DATA_GRID_DARK_SEARCH_COLORS.currentBorder : "rgba(234, 179, 8, 0.82)";
+  const cellSearch = paintToken(getVar, "--warning-bg", isDark ? DATA_GRID_DARK_SEARCH_COLORS.match : "rgb(253, 245, 184)");
+  const cellCurrentSearch = paintToken(getVar, "--warning-bg", isDark ? DATA_GRID_DARK_SEARCH_COLORS.current : "rgba(253, 224, 71, 0.52)");
+  const cellCurrentSearchBorder = paintToken(getVar, "--warning", isDark ? DATA_GRID_DARK_SEARCH_COLORS.currentBorder : "rgba(234, 179, 8, 0.82)");
   const rowNumberDefault = isDark ? DATA_GRID_DARK_ROW_NUMBER_BG : paintToken(getVar, "--data-grid-row-number-default-bg", "rgb(255, 255, 255)");
-  const rowNumberNew = isDark ? DATA_GRID_DARK_ROW_NUMBER_NEW_BG : DATA_GRID_LIGHT_ROW_NUMBER_NEW_BG;
-  const rowNumberEdited = isDark ? DATA_GRID_DARK_ROW_NUMBER_EDITED_BG : DATA_GRID_LIGHT_ROW_NUMBER_EDITED_BG;
-  const rowNumberDeleted = isDark ? DATA_GRID_DARK_ROW_NUMBER_DELETED_BG : DATA_GRID_LIGHT_ROW_NUMBER_DELETED_BG;
+  const rowNumberNew = successBg;
+  const rowNumberEdited = warningBg;
+  const rowNumberDeleted = destructiveBg;
   const rowNumberActive = activeSurface;
-  const rowNumberSelected = isDark ? "rgb(31, 41, 55)" : "rgb(209, 213, 219)";
+  const rowNumberSelected = cellSelected;
 
   return {
     background,
@@ -267,29 +272,29 @@ export function resolveDataGridPaintTheme(options: { getVar: (name: string) => s
     foreground,
     mutedForeground,
     primary,
-    rowMuted: isDark ? rowMuted : paintToken(getVar, "--data-grid-row-muted-bg", rowMuted),
-    rowNew: isDark ? rowNew : paintToken(getVar, "--data-grid-row-new-bg", rowNew),
-    rowDeleted: isDark ? rowDeleted : paintToken(getVar, "--data-grid-row-deleted-bg", rowDeleted),
-    cellActive: isDark ? cellActive : paintToken(getVar, "--data-grid-cell-active-bg", cellActive),
-    cellDirty: isDark ? cellDirty : paintToken(getVar, "--data-grid-cell-dirty-bg", cellDirty),
-    cellSelected: isDark ? cellSelected : paintToken(getVar, "--data-grid-cell-selected-bg", cellSelected),
-    cellSelectedDirty: isDark ? cellSelectedDirty : paintToken(getVar, "--data-grid-cell-selected-dirty-bg", cellSelectedDirty),
-    cellSelectedBorder: isDark ? cellSelectedBorder : paintToken(getVar, "--data-grid-cell-selected-border", cellSelectedBorder),
-    cellSelectedSingle: isDark ? cellSelectedSingle : paintToken(getVar, "--data-grid-cell-selected-single-bg", cellSelectedSingle),
-    cellSelectedSingleBorder: isDark ? primary : paintToken(getVar, "--data-grid-cell-selected-single-border", primary),
-    cellHover: isDark ? cellHover : paintToken(getVar, "--data-grid-cell-hover-bg", cellHover),
-    cellSearch: isDark ? cellSearch : paintToken(getVar, "--data-grid-cell-search-bg", cellSearch),
-    cellCurrentSearch: isDark ? cellCurrentSearch : paintToken(getVar, "--data-grid-cell-current-search-bg", cellCurrentSearch),
-    cellCurrentSearchBorder: isDark ? cellCurrentSearchBorder : paintToken(getVar, "--data-grid-cell-current-search-border", cellCurrentSearchBorder),
+    rowMuted: paintToken(getVar, "--data-grid-row-muted-bg", rowMuted),
+    rowNew: paintToken(getVar, "--data-grid-row-new-bg", rowNew),
+    rowDeleted: paintToken(getVar, "--data-grid-row-deleted-bg", rowDeleted),
+    cellActive: paintToken(getVar, "--data-grid-cell-active-bg", cellActive),
+    cellDirty: paintToken(getVar, "--data-grid-cell-dirty-bg", cellDirty),
+    cellSelected: paintToken(getVar, "--data-grid-cell-selected-bg", cellSelected),
+    cellSelectedDirty: paintToken(getVar, "--data-grid-cell-selected-dirty-bg", cellSelectedDirty),
+    cellSelectedBorder: paintToken(getVar, "--data-grid-cell-selected-border", cellSelectedBorder),
+    cellSelectedSingle: paintToken(getVar, "--data-grid-cell-selected-single-bg", cellSelectedSingle),
+    cellSelectedSingleBorder: paintToken(getVar, "--data-grid-cell-selected-single-border", primary),
+    cellHover: paintToken(getVar, "--data-grid-cell-hover-bg", cellHover),
+    cellSearch: paintToken(getVar, "--data-grid-cell-search-bg", cellSearch),
+    cellCurrentSearch: paintToken(getVar, "--data-grid-cell-current-search-bg", cellCurrentSearch),
+    cellCurrentSearchBorder: paintToken(getVar, "--data-grid-cell-current-search-border", cellCurrentSearchBorder),
     rowNumberDefault,
-    rowNumberNew: isDark ? rowNumberNew : paintToken(getVar, "--data-grid-row-number-new-bg", rowNumberNew),
-    rowNumberEdited: isDark ? rowNumberEdited : paintToken(getVar, "--data-grid-row-number-edited-bg", rowNumberEdited),
-    rowNumberDeleted: isDark ? rowNumberDeleted : paintToken(getVar, "--data-grid-row-number-deleted-bg", rowNumberDeleted),
-    rowNumberActive: isDark ? rowNumberActive : paintToken(getVar, "--data-grid-row-number-active-bg", rowNumberActive),
-    rowNumberSelected: isDark ? rowNumberSelected : paintToken(getVar, "--data-grid-row-number-selected-bg", rowNumberSelected),
+    rowNumberNew: paintToken(getVar, "--data-grid-row-number-new-bg", rowNumberNew),
+    rowNumberEdited: paintToken(getVar, "--data-grid-row-number-edited-bg", rowNumberEdited),
+    rowNumberDeleted: paintToken(getVar, "--data-grid-row-number-deleted-bg", rowNumberDeleted),
+    rowNumberActive: paintToken(getVar, "--data-grid-row-number-active-bg", rowNumberActive),
+    rowNumberSelected: paintToken(getVar, "--data-grid-row-number-selected-bg", rowNumberSelected),
     rowNumberTextClean: mutedForeground,
-    rowNumberTextNew: isDark ? "rgb(94, 233, 181)" : "rgb(0, 122, 85)",
-    rowNumberTextEdited: isDark ? "rgb(255, 210, 48)" : "rgb(187, 77, 0)",
+    rowNumberTextNew: success,
+    rowNumberTextEdited: warning,
     rowNumberTextDeleted: destructive,
   };
 }
